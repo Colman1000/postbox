@@ -131,3 +131,5 @@ More on how it fits together, including the data model and the deployment story,
 ## License
 
 MIT. Use it, fork it, run it for your whole family, sell the T-shirts.
+
+---
