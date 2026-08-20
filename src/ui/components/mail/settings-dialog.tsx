@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
 import { toast } from "sonner";
 import type { SessionInfo } from "@shared/types.ts";
+import type { LiveStatus } from "@/hooks/use-new-mail.ts";
 import { api, ApiError } from "@/lib/api.ts";
 import { deviceSummary, fileSize, fullDate, relativeTime } from "@/lib/format.ts";
 import {
@@ -43,10 +44,13 @@ export function SettingsDialog({
   open,
   onOpenChange,
   session,
+  live,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   session: SessionInfo;
+  /** Whether the live channel is currently up; shown under Alerts. */
+  live: LiveStatus;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -79,7 +83,7 @@ export function SettingsDialog({
               <Templates />
             </TabsContent>
             <TabsContent value="alerts">
-              <Alerts />
+              <Alerts live={live} />
             </TabsContent>
             <TabsContent value="access">
               <Access />
@@ -387,7 +391,7 @@ function Templates() {
  * is granted per-origin per-device by the browser itself, and whether a sound
  * is welcome depends on the room you are in, not on the mailbox.
  */
-function Alerts() {
+function Alerts({ live }: { live: LiveStatus }) {
   const [prefs, setPrefs] = useState<NotifyPrefs>(() => readPrefs());
   const [granted, setGranted] = useState<NotificationPermission>(() =>
     notificationPermission(),
@@ -417,12 +421,30 @@ function Alerts() {
 
   return (
     <div className="space-y-5">
-      <p className="text-muted-foreground text-[12px] leading-relaxed">
-        The app checks for new mail every 15 seconds while this tab is open, and
-        once a minute when it is in the background. New messages appear in the
-        list on their own, and the unread count shows in the tab title — so a
-        background tab is enough to tell you something arrived.
-      </p>
+      <div className="text-muted-foreground space-y-2 text-[12px] leading-relaxed">
+        <p className="flex items-center gap-2">
+          <span
+            className={cn(
+              "size-1.5 rounded-full",
+              live === "open"
+                ? "bg-emerald-500"
+                : live === "connecting"
+                  ? "bg-amber-500"
+                  : "bg-muted-foreground/50",
+            )}
+          />
+          {live === "open"
+            ? "Connected — new mail appears the moment it arrives."
+            : live === "connecting"
+              ? "Connecting to the live channel…"
+              : "Live channel is down; checking every 15 seconds instead."}
+        </p>
+        <p>
+          New messages appear in the list on their own, and the unread count
+          shows in the tab title — so a background tab is enough to tell you
+          something arrived.
+        </p>
+      </div>
 
       <Row
         icon={<BellIcon className="size-4" />}

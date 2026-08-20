@@ -97,6 +97,17 @@ export function playChime(): void {
 }
 
 /**
+ * What to call a message.
+ *
+ * A subject is the only part of an arrival that says what it is, so it leads
+ * every announcement; mail sent without one falls back to its first line, and
+ * then to a label — an alert with a blank heading tells you nothing.
+ */
+export function subjectOf(arrival: Arrival): string {
+  return arrival.subject.trim() || arrival.snippet.trim() || "(no subject)";
+}
+
+/**
  * One desktop notification per arrival, or a single summary for a burst.
  *
  * `tag` is the thread id, so a conversation that gets three replies while you
@@ -117,8 +128,8 @@ export function showNotification(
   try {
     if (arrivals.length === 1) {
       const [arrival] = arrivals;
-      const notification = new Notification(displayName(arrival.from), {
-        body: arrival.subject || arrival.snippet || "(no subject)",
+      const notification = new Notification(subjectOf(arrival), {
+        body: `From ${displayName(arrival.from)}${arrival.from.address ? ` <${arrival.from.address}>` : ""}`,
         tag: arrival.threadId,
         icon: "/favicon.svg",
         silent: true, // The chime is ours to play, so the OS should not double it.
@@ -133,7 +144,7 @@ export function showNotification(
     const notification = new Notification(`${arrivals.length} new messages`, {
       body: arrivals
         .slice(0, 3)
-        .map((a) => `${displayName(a.from)} — ${a.subject || "(no subject)"}`)
+        .map((a) => `${subjectOf(a)} — ${displayName(a.from)}`)
         .join("\n"),
       tag: "postbox-batch",
       icon: "/favicon.svg",

@@ -21,6 +21,9 @@ export interface Env {
   /** Only bound when MAIL_PROVIDER is "cloudflare". */
   EMAIL?: SendEmail;
 
+  /** The doorbell every open tab waits on. See mailbox.ts. */
+  MAILBOX: DurableObjectNamespace<import("./mailbox.ts").Mailbox>;
+
   /** Injected by Alchemy's Vite resource for the static UI. */
   ASSETS: Fetcher;
 }

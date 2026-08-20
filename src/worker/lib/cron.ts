@@ -12,6 +12,7 @@ import { deliver } from "../routes/compose.ts";
  */
 export async function runScheduledWork(env: Env): Promise<void> {
   const now = Date.now();
+  let changed = false;
 
   // ── send-later ────────────────────────────────────────────────────────────
   const { results: due } = await env.DB.prepare(
@@ -36,6 +37,7 @@ export async function runScheduledWork(env: Env): Promise<void> {
     if ((claim.meta?.changes ?? 0) === 0) continue;
 
     await deliver(env, row.id);
+    changed = true;
   }
 
   // ── snooze ────────────────────────────────────────────────────────────────
@@ -66,6 +68,17 @@ export async function runScheduledWork(env: Env): Promise<void> {
     const summaries = await Promise.all(ids.map((id) => recomputeThread(env.DB, id)));
     const valid = summaries.filter((s): s is D1PreparedStatement => s !== null);
     if (valid.length > 0) await env.DB.batch(valid);
+    changed = true;
+  }
+
+  // A conversation that woke up, or a scheduled message that went out, changes
+  // what the open tab is looking at just as much as new mail does.
+  if (changed) {
+    try {
+      await env.MAILBOX.getByName("mailbox").ring("changed");
+    } catch (error) {
+      console.error("doorbell failed", { error: String(error) });
+    }
   }
 
   // ── retention ─────────────────────────────────────────────────────────────

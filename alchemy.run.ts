@@ -17,6 +17,7 @@ import alchemy from "alchemy";
 import {
   D1Database,
   DnsRecords,
+  DurableObjectNamespace,
   EmailCatchAll,
   EmailRouting,
   EmailAddress,
@@ -185,6 +186,15 @@ export const site = await Vite("postbox", {
   bindings: {
     DB: db,
     CACHE: cache,
+
+    // The doorbell an open tab waits on, so new mail appears without polling
+    // for it. SQLite-backed because that is the only kind the Workers Free
+    // plan offers — and this one stores nothing anyway, so the backend costs
+    // nothing either way.
+    MAILBOX: DurableObjectNamespace("mailbox", {
+      className: "Mailbox",
+      sqlite: true,
+    }),
 
     // Exactly one of these is present, depending on MAIL_PROVIDER. The
     // Cloudflare path needs no credential at all — the binding is already

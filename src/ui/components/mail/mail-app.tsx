@@ -79,8 +79,8 @@ export function MailApp({ session }: { session: SessionInfo }) {
     setQuery("");
     setSelectedId(threadId);
   }, []);
-  const { unread } = useNewMail({ onOpenThread: openArrival });
-  useMailTitle(unread);
+  const { unread, live } = useNewMail({ onOpenThread: openArrival });
+  useMailTitle(unread, session.domain);
 
   // Debounce so every keystroke does not become an FTS query.
   useEffect(() => {
@@ -384,7 +384,12 @@ export function MailApp({ session }: { session: SessionInfo }) {
         )}
 
         {showSettings && (
-          <SettingsDialog open onOpenChange={setShowSettings} session={session} />
+          <SettingsDialog
+            open
+            onOpenChange={setShowSettings}
+            session={session}
+            live={live}
+          />
         )}
         {showShortcuts && <ShortcutsDialog open onOpenChange={setShowShortcuts} />}
       </Suspense>

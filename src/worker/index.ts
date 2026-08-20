@@ -4,6 +4,7 @@ import { readCookie, readSession } from "./lib/auth.ts";
 import { actorFrom, describeRequest, recordAudit } from "./lib/audit.ts";
 import { handleInboundEmail } from "./lib/inbound.ts";
 import { runScheduledWork } from "./lib/cron.ts";
+import { Mailbox } from "./mailbox.ts";
 import { auth } from "./routes/auth.ts";
 import { compose } from "./routes/compose.ts";
 import { mail } from "./routes/mail.ts";
@@ -97,8 +98,37 @@ app.onError((error, c) => {
   );
 });
 
+/**
+ * The live channel, handled before Hono sees it.
+ *
+ * A 101 response has immutable headers, and the API middleware sets several on
+ * everything it touches — so the upgrade is answered here rather than routed
+ * through it. The session check is the same one the middleware performs; an
+ * open socket into your mailbox is not something to leave ungated.
+ */
+async function handleUpgrade(request: Request, env: Env): Promise<Response> {
+  const token = readCookie(request.headers.get("cookie"));
+  const claims = token ? await readSession(env.AUTH_SECRET, token) : null;
+  if (!claims) return new Response("Not signed in", { status: 401 });
+
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    return new Response("Expected a WebSocket upgrade", { status: 426 });
+  }
+
+  // One object for the whole mailbox: there is one inbox, and every tab
+  // watching it wants the same doorbell.
+  return env.MAILBOX.getByName("mailbox").fetch(request);
+}
+
+export { Mailbox };
+
 export default {
-  fetch: app.fetch,
+  async fetch(request, env, ctx) {
+    if (new URL(request.url).pathname === "/api/live") {
+      return handleUpgrade(request, env);
+    }
+    return app.fetch(request, env, ctx);
+  },
 
   async email(message, env, ctx) {
     try {

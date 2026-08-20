@@ -1,21 +1,23 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { MailUpdate } from "@shared/types.ts";
 import { ApiError, api } from "@/lib/api.ts";
 import { displayName } from "@/lib/format.ts";
-import { playChime, readPrefs, showNotification } from "@/lib/notify.ts";
+import { playChime, readPrefs, showNotification, subjectOf } from "@/lib/notify.ts";
 import { keys } from "@/lib/queries.ts";
+import { useLiveMail, type LiveStatus } from "./use-live-mail.ts";
 
 /**
  * Mail that arrives while the app is open.
  *
- * Cloudflare's free plan has no way to push — no Durable Object, no WebSocket
- * on the receiving side — so this polls. It is a deliberately cheap request
- * (a count and, at most, ten rows) and the interval backs off when the tab is
- * hidden, so a page left open all day costs a rounding error against the free
- * 100k requests. When something does land, the caches the inbox is built from
- * are invalidated, which is what makes the list update on its own.
+ * Two mechanisms, one path. A Durable Object holds a socket open and rings it
+ * when something lands, which is what makes new mail appear immediately; the
+ * ring carries nothing, so both it and the timer end in the same request to
+ * `/api/updates` and the same code below. Polling is not removed when the
+ * socket connects, only slowed to a heartbeat — a doorbell nobody answers is
+ * worse than a slow poll, and this way a failed socket degrades to exactly the
+ * behaviour that came before it.
  *
  * The high-water mark is the server's clock, echoed back on the next request,
  * so a browser whose clock is wrong cannot skip a message or announce one
@@ -24,6 +26,8 @@ import { keys } from "@/lib/queries.ts";
  */
 const VISIBLE_MS = 15_000;
 const HIDDEN_MS = 60_000;
+/** With the socket up, the poll is only there in case the socket is lying. */
+const HEARTBEAT_MS = 5 * 60_000;
 
 export function useNewMail({ onOpenThread }: { onOpenThread: (threadId: string) => void }) {
   const client = useQueryClient();
@@ -32,10 +36,20 @@ export function useNewMail({ onOpenThread }: { onOpenThread: (threadId: string) 
   const openRef = useRef(onOpenThread);
   openRef.current = onOpenThread;
 
+  // Ringing simply asks the question the timer would have asked, so there is
+  // one place where an arrival turns into a notification.
+  const ring = useCallback(() => {
+    void client.invalidateQueries({ queryKey: keys.updates });
+  }, [client]);
+
+  const live = useLiveMail(ring);
+  const connected = live === "open";
+
   const query = useQuery<MailUpdate>({
     queryKey: keys.updates,
     queryFn: () => api.updates(cursor.current),
-    refetchInterval: () => (document.hidden ? HIDDEN_MS : VISIBLE_MS),
+    refetchInterval: () =>
+      connected ? HEARTBEAT_MS : document.hidden ? HIDDEN_MS : VISIBLE_MS,
     refetchIntervalInBackground: true,
     staleTime: 0,
     gcTime: 0,
@@ -76,36 +90,50 @@ export function useNewMail({ onOpenThread }: { onOpenThread: (threadId: string) 
       return;
     }
 
+    // The subject leads, because that is what tells you whether to look now —
+    // the sender is the supporting line. A message genuinely sent without one
+    // still gets a heading rather than an empty first line.
     const [first] = data.arrivals;
     if (data.arrivals.length === 1) {
-      toast(displayName(first.from), {
-        description: first.subject || first.snippet || "(no subject)",
+      toast(subjectOf(first), {
+        description: `${displayName(first.from)}${first.snippet ? ` — ${first.snippet}` : ""}`,
         action: { label: "Open", onClick: () => openRef.current(first.threadId) },
       });
     } else {
       toast(`${data.arrivals.length} new messages`, {
-        description: `Latest from ${displayName(first.from)}`,
+        description: data.arrivals
+          .slice(0, 3)
+          .map((arrival) => `${subjectOf(arrival)} · ${displayName(arrival.from)}`)
+          .join("\n"),
         action: { label: "Open", onClick: () => openRef.current(first.threadId) },
       });
     }
   }, [data, client]);
 
-  return { unread: data?.unread ?? 0 };
+  return { unread: data?.unread ?? 0, live };
 }
 
-/**
- * The unread count, in the one place you can see without switching tabs.
- *
- * Kept to `(3) Postbox` rather than something more descriptive because the tab
- * strip truncates hard — the number has to survive being cut to a few
- * characters, and everything after it is decoration.
- */
-export function useMailTitle(unread: number, base = "Postbox"): void {
-  useEffect(() => {
-    document.title = unread > 0 ? `(${unread}) ${base}` : base;
-  }, [unread, base]);
+export type { LiveStatus };
 
-  useEffect(() => () => {
-    document.title = base;
-  }, [base]);
+/**
+ * The unread count and the mailbox it belongs to, in the one place you can see
+ * without switching tabs.
+ *
+ * Ordered for a tab strip that truncates hard: the count survives being cut to
+ * a few characters, the domain is what tells two Postbox tabs apart, and the
+ * product name goes last because by then you already know what you are looking
+ * at.
+ */
+export function useMailTitle(unread: number, domain?: string): void {
+  useEffect(() => {
+    const name = domain ? `${domain} · Postbox` : "Postbox";
+    document.title = unread > 0 ? `(${unread}) ${name}` : name;
+  }, [unread, domain]);
+
+  useEffect(
+    () => () => {
+      document.title = "Postbox";
+    },
+    [],
+  );
 }

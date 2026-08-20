@@ -231,4 +231,13 @@ export async function handleInboundEmail(
   // The summary must be computed after the message row exists.
   const summary = await recomputeThread(env.DB, threadId);
   if (summary) await summary.run();
+
+  // Ring every open tab. Deliberately last and deliberately swallowed: the
+  // message is already stored, and a doorbell that fails must not turn a
+  // delivered email into a bounced one. The tab's poll is the backstop.
+  try {
+    await env.MAILBOX.getByName("mailbox").ring("mail");
+  } catch (error) {
+    console.error("doorbell failed", { threadId, error: String(error) });
+  }
 }

@@ -3,13 +3,19 @@ import type { Address } from "@shared/types.ts";
 /** Display helpers. Kept together so date and name formatting stay consistent. */
 
 export function displayName(address: Address | undefined): string {
-  if (!address) return "Unknown";
+  if (!address) return "Unknown sender";
   if (address.name?.trim()) return address.name.trim();
+
   const local = address.address.split("@")[0] ?? address.address;
-  return local
+  const pretty = local
     .replace(/[._-]+/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase())
     .trim();
+
+  // Mail with a malformed or absent From header would otherwise name itself
+  // with an empty string, and a row whose heading is blank reads as a bug in
+  // the app rather than a quirk of the message.
+  return pretty || address.address.trim() || "Unknown sender";
 }
 
 export function initials(address: Address | undefined): string {
@@ -131,7 +137,9 @@ export function participantSummary(
     (p) => p.address.toLowerCase() !== self.toLowerCase(),
   );
   const list = others.length > 0 ? others : participants;
-  if (list.length === 0) return "";
+  // Same reasoning as displayName: every row gets a heading, even one whose
+  // participants the server could not work out.
+  if (list.length === 0) return "Unknown sender";
   if (list.length === 1) return displayName(list[0]);
 
   const names = list.slice(0, max).map((p) => displayName(p).split(" ")[0]);
