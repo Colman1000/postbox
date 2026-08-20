@@ -9,6 +9,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export type MailProvider = "resend" | "cloudflare";
+
 export interface PostboxConfig {
   /** Apex domain / Cloudflare zone. */
   domain: string;
@@ -20,10 +22,18 @@ export interface PostboxConfig {
   defaultFrom: string;
   /** Optional mailbox that also receives a copy of everything inbound. */
   forwardTo?: string;
-  /** Resend sending region. */
+  /** Which service sends outbound mail. */
+  mailProvider: MailProvider;
+  /** Resend sending region. Ignored unless mailProvider is "resend". */
   resendRegion: string;
-  /** Full-access Resend key, used only during provisioning. */
+  /** Full-access Resend key. Empty unless mailProvider is "resend". */
   resendApiKey: string;
+  /**
+   * Whether to also expose the Worker on its *.workers.dev hostname.
+   * Off by default: a second public door to your mailbox that you did not
+   * ask for is a liability, not a feature.
+   */
+  workersDevUrl: boolean;
   /** Operator-supplied UI password, if any. */
   appPassword?: string;
   /** Explicit Cloudflare account, if the token spans several. */
@@ -118,13 +128,24 @@ export function resolveConfig(): PostboxConfig {
     );
   }
 
-  const resendApiKey = env("RESEND_API_KEY");
-  if (!resendApiKey) {
+  const mailProvider = (env("MAIL_PROVIDER") ?? "resend").toLowerCase() as MailProvider;
+  if (mailProvider !== "resend" && mailProvider !== "cloudflare") {
     problems.push(
-      "RESEND_API_KEY is required — a Full-access key from https://resend.com/api-keys.",
+      `MAIL_PROVIDER "${mailProvider}" must be either "resend" (free) or "cloudflare" (Workers Paid).`,
     );
-  } else if (!resendApiKey.startsWith("re_")) {
-    problems.push('RESEND_API_KEY looks wrong — Resend keys start with "re_".');
+  }
+
+  // Only the Resend path needs a Resend key. On the Cloudflare path the whole
+  // variable is irrelevant, so demanding it would be noise.
+  const resendApiKey = env("RESEND_API_KEY");
+  if (mailProvider === "resend") {
+    if (!resendApiKey) {
+      problems.push(
+        "RESEND_API_KEY is required — a Full-access key from https://resend.com/api-keys.",
+      );
+    } else if (!resendApiKey.startsWith("re_")) {
+      problems.push('RESEND_API_KEY looks wrong — Resend keys start with "re_".');
+    }
   }
 
   const forwardTo = env("FORWARD_TO");
@@ -170,8 +191,10 @@ export function resolveConfig(): PostboxConfig {
     appHostname,
     defaultFrom,
     forwardTo,
+    mailProvider,
     resendRegion,
-    resendApiKey: resendApiKey!,
+    resendApiKey: resendApiKey ?? "",
+    workersDevUrl: (env("WORKERS_DEV_URL") ?? "false").toLowerCase() === "true",
     appPassword: env("APP_PASSWORD"),
     accountId: env("CLOUDFLARE_ACCOUNT_ID"),
     names: {

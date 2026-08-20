@@ -14,7 +14,7 @@ import {
   type MessageRow,
 } from "../lib/db.ts";
 import { rfcMessageId, ulid } from "../lib/ids.ts";
-import { SendError, renderBody, send } from "../lib/outbound.ts";
+import { SendError, renderBody, send } from "../lib/mail/index.ts";
 import type { App } from "./context.ts";
 
 export const compose = new Hono<App>();
@@ -418,6 +418,12 @@ export async function deliver(
   const generatedId = rfcMessageId(env.MAIL_DOMAIN);
   const now = Date.now();
 
+  // Rendered once, then both sent and stored. Rendering separately for each
+  // would let the copy in Sent drift from what the recipient actually got —
+  // which is exactly how a signature ends up in your archive but not in
+  // their inbox.
+  const { html, text } = renderBody(row.body_text ?? "", identity?.signature_html);
+
   try {
     const outcome = await send(env, {
       from: { address: row.from_address, name: identity?.name ?? undefined },
@@ -425,7 +431,8 @@ export async function deliver(
       cc,
       bcc,
       subject: row.subject,
-      body: row.body_text ?? "",
+      html,
+      text,
       inReplyTo,
       references,
       attachments: (attachmentRows ?? []).map((a) => ({
@@ -434,8 +441,6 @@ export async function deliver(
         contentType: a.mime_type,
       })),
     });
-
-    const { html, text } = renderBody(row.body_text ?? "", identity?.signature_html);
 
     await env.DB.batch([
       env.DB.prepare(

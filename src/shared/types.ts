@@ -150,12 +150,19 @@ export interface Stats {
   counts: Record<Folder, number>;
   unread: Record<Folder, number>;
   starred: number;
-  /** Resend free tier is 100 sends/day, 3,000/month. */
+  /** Whatever the configured sending provider allows. */
   quota: {
+    provider: string;
+    providerLabel: string;
     sentToday: number;
-    dailyLimit: number;
     sentThisMonth: number;
-    monthlyLimit: number;
+    /** null where the provider publishes no fixed daily cap. */
+    dailyLimit: number | null;
+    /** null where sending is unmetered. */
+    monthlyLimit: number | null;
+    /** False when passing the monthly figure means billing, not refusal. */
+    monthlyIsHardCap: boolean;
+    note: string;
   };
   storage: {
     messages: number;

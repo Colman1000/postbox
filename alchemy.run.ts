@@ -21,6 +21,7 @@ import {
   EmailRouting,
   EmailAddress,
   EmailRule,
+  EmailSender,
   KVNamespace,
   Vite,
   createCloudflareApi,
@@ -81,45 +82,61 @@ const cache = await KVNamespace("cache", {
   adopt: true,
 });
 
-// ── 3. Resend: sending domain, DNS, verification, scoped key ────────────────
-const sendingDomain = await ResendDomain("resend-domain", {
-  name: config.domain,
-  apiKey: config.resendApiKey,
-  region: config.resendRegion,
-  stage: config.stage,
-});
+// ── 3. Outbound: whichever provider this deployment is configured for ───────
+//
+// Resend is the default because it is the only way to send from a free
+// Cloudflare account. Cloudflare's own Email Sending is better in every other
+// respect — no third party, no second credential — but it requires the Workers
+// Paid plan, so it is opt-in via MAIL_PROVIDER.
+const usingResend = config.mailProvider === "resend";
+
+const sendingDomain = usingResend
+  ? await ResendDomain("resend-domain", {
+      name: config.domain,
+      apiKey: config.resendApiKey,
+      region: config.resendRegion,
+      stage: config.stage,
+    })
+  : undefined;
 
 // The step everyone normally does by hand in a dashboard.
-// Resend publishes its records under `send.<domain>` and `<selector>._domainkey`,
-// which is why they coexist with Email Routing's apex MX records instead of
-// fighting them.
-const sendingDns = await DnsRecords("resend-dns", {
-  zoneId,
-  records: sendingDomain.records.map((record) => ({
-    type: record.type,
-    name: record.name,
-    content: record.content,
-    priority: record.priority,
-    ttl: 1, // 1 = automatic
-    proxied: false,
-    comment: `Postbox · Resend ${record.purpose}`,
-  })),
-});
+// Resend publishes its records under `send.<domain>` and
+// `<selector>._domainkey`, which is why they coexist with Email Routing's apex
+// MX records instead of fighting them.
+const sendingDns = sendingDomain
+  ? await DnsRecords("resend-dns", {
+      zoneId,
+      records: sendingDomain.records.map((record) => ({
+        type: record.type,
+        name: record.name,
+        content: record.content,
+        priority: record.priority,
+        ttl: 1, // 1 = automatic
+        proxied: false,
+        comment: `Postbox · Resend ${record.purpose}`,
+      })),
+    })
+  : undefined;
 
-const verification = await ResendVerification("resend-verify", {
-  domainId: sendingDomain.domainId,
-  apiKey: config.resendApiKey,
-  dependsOn: sendingDns.records.map((r) => r.id).join(","),
-});
+const verification =
+  sendingDomain && sendingDns
+    ? await ResendVerification("resend-verify", {
+        domainId: sendingDomain.domainId,
+        apiKey: config.resendApiKey,
+        dependsOn: sendingDns.records.map((r) => r.id).join(","),
+      })
+    : undefined;
 
 // The credential production actually runs on: send-only, pinned to this one
 // domain. The full-access key from .env never leaves your machine.
-const sendingKey = await ResendSendingKey("resend-key", {
-  apiKey: config.resendApiKey,
-  domainId: sendingDomain.domainId,
-  name: `postbox-${config.stage}-${config.domain}`,
-  stage: config.stage,
-});
+const sendingKey = sendingDomain
+  ? await ResendSendingKey("resend-key", {
+      apiKey: config.resendApiKey,
+      domainId: sendingDomain.domainId,
+      name: `postbox-${config.stage}-${config.domain}`,
+      stage: config.stage,
+    })
+  : undefined;
 
 // ── 4. Inbound mail ─────────────────────────────────────────────────────────
 // Free and unlimited on the Workers Free plan. Enabling this writes the apex
@@ -148,7 +165,7 @@ export const site = await Vite("postbox", {
   // Without this, a request to /api/* that does not match a built file is
   // answered with index.html by the asset layer and never reaches the Worker.
   assets: { run_worker_first: ["/api/*"] },
-  url: true,
+  url: config.workersDevUrl,
   domains: [{ domainName: config.appHostname, zoneId, adopt: true }],
   // Wake up once a minute to flush scheduled sends and un-snooze threads.
   crons: ["* * * * *"],
@@ -157,7 +174,18 @@ export const site = await Vite("postbox", {
     DB: db,
     CACHE: cache,
 
-    RESEND_API_KEY: alchemy.secret(sendingKey.token),
+    // Exactly one of these is present, depending on MAIL_PROVIDER. The
+    // Cloudflare path needs no credential at all — the binding is already
+    // authenticated as this Worker.
+    ...(sendingKey
+      ? { RESEND_API_KEY: alchemy.secret(sendingKey.token) }
+      : {
+          // Unrestricted on purpose: identities are added at runtime from
+          // Settings, so pinning the allow-list at deploy time would break
+          // every address created afterwards.
+          EMAIL: EmailSender(),
+        }),
+
     AUTH_SECRET: alchemy.secret(vault.authSecret!),
     APP_PASSWORD: alchemy.secret(vault.appPassword!),
 
@@ -166,9 +194,10 @@ export const site = await Vite("postbox", {
     APP_HOSTNAME: config.appHostname,
     FORWARD_TO: config.forwardTo ?? "",
     STAGE: config.stage,
+    MAIL_PROVIDER: config.mailProvider,
     // Seeded from the verification we just ran; the Worker upgrades this to a
     // sticky "yes" in KV after its first successful send.
-    SENDING_READY: verification.verified ? "1" : "0",
+    SENDING_READY: usingResend ? (verification?.verified ? "1" : "0") : "1",
   },
 });
 
@@ -208,10 +237,11 @@ if (app.phase === "up") {
     appHostname: config.appHostname,
     password: vault.appPassword!,
     passwordWasGenerated: vault.appPasswordGenerated === true,
-    sendingStatus: verification.status,
+    provider: config.mailProvider,
+    sendingStatus: usingResend ? (verification?.status ?? "pending") : "verified",
     forwardTo: forwardAddress?.email,
     forwardVerified: forwardAddress?.verified ?? false,
-    dnsRecordCount: sendingDns.records.length,
+    dnsRecordCount: sendingDns?.records.length ?? 0,
     vaultRead: readVault(config.stage),
   });
 }

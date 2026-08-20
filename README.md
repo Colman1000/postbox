@@ -12,7 +12,7 @@
 
 ## The gap this fills
 
-You bought a domain. You'd like `you@yourdomain.com`. Your options are Google Workspace at $7 a user per month, Fastmail at $5, or Zoho's free tier with its own asterisks.
+You bought a domain. You'd like `you@yourdomain.com`. Your options are Google Workspace at \$7 a user per month, Fastmail at \$5, or Zoho's free tier with its own asterisks.
 
 Meanwhile Cloudflare will happily receive mail for your domain, unlimited, free, forever. The catch is that Email Routing only *forwards*. Everything lands in your personal Gmail, tangled up with newsletters and delivery notifications, and you can't reply as your domain without more setup.
 
@@ -80,6 +80,14 @@ When you're done, `just down` removes every single thing it made.
 
 Cloudflare receives mail for free but charges for sending: outbound needs the paid Workers plan. Since the point of this project is a mailbox that costs nothing, sending goes through Resend's free tier instead, and Postbox wires the whole thing up for you. It registers the domain, writes the DNS records into Cloudflare, and mints a send-only key scoped to your domain so your full-access key never leaves your laptop.
 
+If you're ever on the Workers Paid plan anyway, one line in `.env` moves sending to Cloudflare and drops the third party entirely:
+
+```bash
+MAIL_PROVIDER=cloudflare
+```
+
+`just up` then skips the Resend setup, binds Cloudflare's sender to the Worker, and leaves `RESEND_API_KEY` unused. Your mail is untouched, and you can switch back just as easily. **This is not the free path** — it needs the $5/month Workers plan, which is exactly why it isn't the default.
+
 ## What it costs
 
 Nothing. To be specific about it:
@@ -110,7 +118,9 @@ Set `STAGE=staging` in `.env` and you get a completely separate copy, with its o
 
 ## Good to know
 
-The inbox is behind a single password, because a public URL that can send mail from your domain is a spam relay waiting to happen. If you'd rather use SSO, put Cloudflare Access in front of the hostname.
+The inbox is behind a single password, because a public URL that can send mail from your domain is a spam relay waiting to happen. The app is served only on your own hostname; the `*.workers.dev` address is switched off, so there's one door rather than two.
+
+If you already run Cloudflare Zero Trust, you can put Access in front of `mail.yourdomain.com` for proper SSO. Postbox doesn't set that up for you, because Cloudflare's onboarding asks for a payment method even on the free Zero Trust tier, and this project promises you'll never be asked for a card. [The architecture notes](docs/ARCHITECTURE.md#putting-cloudflare-access-in-front) explain how to wire it up if you want it.
 
 Your mail lives in your own Cloudflare D1 database. Nobody else can read it, there's no analytics, and there's nothing to export because it was never anywhere else.
 

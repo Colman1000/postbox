@@ -90,9 +90,13 @@ export function Sidebar({
     applyTheme(next);
   }
 
+  // Providers differ: Resend caps you at 100 a day, Cloudflare publishes no
+  // fixed daily number and meters by month. Show whichever one is real.
   const quota = stats.data?.quota;
-  const usedToday = quota ? Math.round((quota.sentToday / quota.dailyLimit) * 100) : 0;
-  const nearLimit = usedToday >= 80;
+  const cap = quota?.dailyLimit ?? quota?.monthlyLimit ?? null;
+  const used = quota ? (quota.dailyLimit !== null ? quota.sentToday : quota.sentThisMonth) : 0;
+  const percent = cap ? Math.min(100, Math.round((used / cap) * 100)) : 0;
+  const nearLimit = percent >= 80 && (quota?.monthlyIsHardCap ?? true);
 
   return (
     <aside
@@ -248,7 +252,7 @@ export function Sidebar({
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between">
                   <span className="text-muted-foreground text-[10px] font-medium tracking-wider uppercase">
-                    Sends today
+                    {quota.dailyLimit !== null ? "Sends today" : "Sent this month"}
                   </span>
                   <span
                     className={cn(
@@ -256,14 +260,15 @@ export function Sidebar({
                       nearLimit ? "text-foreground font-semibold" : "text-muted-foreground",
                     )}
                   >
-                    {quota.sentToday}/{quota.dailyLimit}
+                    {used}
+                    {cap !== null && `/${cap}`}
                   </span>
                 </div>
-                <Progress value={usedToday} className="h-1" />
+                {cap !== null && <Progress value={percent} className="h-1" />}
               </div>
             </TooltipTrigger>
-            <TooltipContent side="top">
-              {quota.sentThisMonth} of {quota.monthlyLimit} this month · Resend free tier
+            <TooltipContent side="top" className="max-w-64 text-balance">
+              {quota.note} Sending via {quota.providerLabel}.
             </TooltipContent>
           </Tooltip>
         </div>

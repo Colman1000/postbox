@@ -27,6 +27,7 @@ const paint = (color: string, text: string) =>
 
 export interface SummaryInput {
   config: PostboxConfig;
+  provider: "resend" | "cloudflare";
   url: string;
   appHostname: string;
   password: string;
@@ -43,6 +44,7 @@ export async function printSummary(input: SummaryInput): Promise<void> {
   const line = (label: string, value: string) =>
     `  ${paint(c.gray, label.padEnd(14))} ${value}`;
 
+  const usingResend = input.provider === "resend";
   const sendingOk = input.sendingStatus === "verified";
   const sendingBadge = sendingOk
     ? paint(c.green, "verified")
@@ -55,12 +57,19 @@ export async function printSummary(input: SummaryInput): Promise<void> {
     paint(c.bold, "  Postbox is live."),
     "",
     line("Mailbox", paint(c.cyan, `https://${input.appHostname}`)),
-    line("Fallback URL", paint(c.dim, input.url)),
+    ...(input.url && !input.url.includes(input.appHostname)
+      ? [line("Also at", paint(c.dim, input.url))]
+      : []),
     line("Stage", config.stage),
     "",
     paint(c.bold, "  Mail"),
     line("Receiving", `${paint(c.green, "on")} ${paint(c.dim, `— anything@${config.domain} lands in the app`)}`),
-    line("Sending", `${sendingBadge} ${paint(c.dim, `— via Resend, ${input.dnsRecordCount} DNS records written`)}`),
+    line(
+      "Sending",
+      usingResend
+        ? `${sendingBadge} ${paint(c.dim, `— via Resend, ${input.dnsRecordCount} DNS records written`)}`
+        : `${paint(c.green, "on")} ${paint(c.dim, "— via Cloudflare Email Sending (Workers Paid)")}`,
+    ),
     line("Send as", config.defaultFrom),
   ];
 
@@ -94,7 +103,7 @@ export async function printSummary(input: SummaryInput): Promise<void> {
 
   // Anything that still needs a human, stated as an instruction.
   const todo: string[] = [];
-  if (!sendingOk) {
+  if (usingResend && !sendingOk) {
     todo.push(
       `Resend has not confirmed ${config.domain} yet. The records are already in\n` +
         "     Cloudflare DNS — this usually clears within a few minutes. Re-check with:\n" +

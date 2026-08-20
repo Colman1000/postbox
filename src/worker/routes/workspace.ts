@@ -10,7 +10,7 @@ import type {
 } from "../../shared/types.ts";
 import { isValidAddress } from "../lib/addresses.ts";
 import { shortId } from "../lib/ids.ts";
-import { DAILY_LIMIT, MONTHLY_LIMIT, readQuota } from "../lib/outbound.ts";
+import { getProvider, readQuota } from "../lib/mail/index.ts";
 import type { App } from "./context.ts";
 
 export const workspace = new Hono<App>();
@@ -351,16 +351,21 @@ workspace.get("/stats", async (c) => {
   ).first<{ messages: number; bytes: number }>();
 
   const quota = await readQuota(c.env);
+  const provider = getProvider(c.env);
 
   const stats: Stats = {
     counts,
     unread,
     starred: starred?.n ?? 0,
     quota: {
+      provider: provider.id,
+      providerLabel: provider.label,
       sentToday: quota.sentToday,
-      dailyLimit: DAILY_LIMIT,
       sentThisMonth: quota.sentThisMonth,
-      monthlyLimit: MONTHLY_LIMIT,
+      dailyLimit: provider.limits.daily,
+      monthlyLimit: provider.limits.monthly,
+      monthlyIsHardCap: provider.limits.monthlyIsHardCap,
+      note: provider.limits.note,
     },
     storage: {
       messages: storage?.messages ?? 0,
