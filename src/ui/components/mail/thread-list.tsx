@@ -206,7 +206,12 @@ export function ThreadList({
             <IconAction label="Archive" shortcut="E" onClick={() => onAction("archive")}>
               <ArchiveIcon />
             </IconAction>
-            <IconAction label="Trash" shortcut="#" onClick={() => onAction("trash")}>
+            {/* Nothing moves out of Trash except permanently. */}
+            <IconAction
+              label={view.folder === "trash" ? "Delete forever" : "Trash"}
+              shortcut="#"
+              onClick={() => onAction(view.folder === "trash" ? "delete" : "trash")}
+            >
               <Trash2Icon />
             </IconAction>
             <IconAction label="Mark unread" shortcut="U" onClick={() => onAction("unread")}>

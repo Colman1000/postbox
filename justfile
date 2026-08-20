@@ -27,18 +27,22 @@ _default:
 up: _preflight _install
     @{{run}} alchemy deploy ./alchemy.run.ts
 
-# Destroy every resource this project created, including the Resend key.
+# Destroy what this project created — and only that. Anything that was already
+# there when Postbox arrived is left alone; `just down` prints which is which
+# before it asks you to confirm.
 down: _preflight _install
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(node infra/names.ts)"
-    echo "This removes the Worker, D1 database, KV namespace, Email Routing rules,"
-    echo "Resend DNS records, the Resend domain and the send-only API key."
-    echo "Every message stored in ${POSTBOX_DB} is deleted and is not recoverable."
+    node infra/teardown.ts plan
     printf "Type the domain (%s) to confirm: " "$POSTBOX_DOMAIN"
     read -r reply
     [ "$reply" = "$POSTBOX_DOMAIN" ] || { echo "Aborted."; exit 1; }
+    # Drop the state for everything being kept, so the destroy cannot see it.
+    node infra/teardown.ts forget
     {{run}} alchemy destroy ./alchemy.run.ts
+    # And put back the catch-all rule Postbox took over, if there was one.
+    node infra/teardown.ts restore
 
 # ── day to day ──────────────────────────────────────────────────────────────
 

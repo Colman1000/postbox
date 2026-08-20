@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
+import { AtSignIcon, BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
 import { toast } from "sonner";
 import type { SessionInfo } from "@shared/types.ts";
 import type { LiveStatus } from "@/hooks/use-new-mail.ts";
@@ -475,12 +475,51 @@ function Alerts({ live }: { live: LiveStatus }) {
 
       <Separator />
 
+      {/*
+        Registering has to happen from a click: browsers ignore a protocol
+        handler requested on page load, which is the correct instinct.
+      */}
+      <div className="flex items-start gap-3 rounded-lg border p-3">
+        <span className="text-muted-foreground mt-0.5">
+          <AtSignIcon className="size-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-medium">Default mail app</p>
+          <p className="text-muted-foreground mt-0.5 text-[12px] leading-relaxed">
+            Hand this browser's <code className="text-[11px]">mailto:</code> links to Postbox,
+            so writing to an address anywhere opens the composer here. Links inside your own
+            mail already do.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            try {
+              navigator.registerProtocolHandler(
+                "mailto",
+                `${location.origin}/?mailto=%s`,
+              );
+              toast.success("Asked your browser to use Postbox for mailto: links", {
+                description: "Confirm it in the prompt or in your browser's settings.",
+              });
+            } catch (error) {
+              toast.error("This browser would not take the request", {
+                description: error instanceof Error ? error.message : undefined,
+              });
+            }
+          }}
+        >
+          Use Postbox
+        </Button>
+      </div>
+
       <Button
         variant="outline"
         size="sm"
         onClick={() => {
           if (prefs.sound) playChime();
-          toast("Somebody", { description: "This is what a new message looks like" });
+          toast("This is what a new message looks like", { description: "Somebody" });
         }}
       >
         Preview an alert

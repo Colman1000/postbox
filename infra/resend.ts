@@ -93,6 +93,14 @@ export interface ResendDomainProps {
   region: string;
   /** Stage, used for vault caching. */
   stage: string;
+  /**
+   * Leave the domain registered when this resource is destroyed.
+   *
+   * Set when Postbox adopted a domain it did not register, or when it cannot
+   * tell — deleting one that was already there would take down whatever else
+   * the operator sends through it.
+   */
+  preserve?: boolean;
 }
 
 export interface ResendDomain {
@@ -166,6 +174,13 @@ export const ResendDomain = Resource(
   ): Promise<ResendDomain> {
     if (this.phase === "delete") {
       const domainId = this.output?.domainId ?? readVault(props.stage).resendDomainId;
+      // A domain that was already registered when Postbox arrived belongs to
+      // whoever registered it — quite possibly with other keys sending through
+      // it. Forget it instead of deleting it.
+      if (props.preserve) {
+        updateVault(props.stage, (v) => ({ ...v, resendDomainId: undefined }));
+        return this.destroy();
+      }
       if (domainId) {
         const { ok, status, data } = await resend(
           props.apiKey,

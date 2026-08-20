@@ -166,6 +166,19 @@ Threading uses `In-Reply-To` and `References` first, since those are authoritati
 
 Search is a standalone FTS5 table written by the Worker in the same batch as the message. Drafts are indexed too.
 
+## What `just down` will not remove
+
+Alchemy destroys what it holds state for, and two of those resources destroy wider than they create: the Email Routing resource tears down by switching Email Routing off for the whole zone, and the catch-all resource disables whatever rule is there rather than the one Postbox wrote. On a domain that was already receiving mail, both are somebody else's outage.
+
+So ownership is established rather than assumed, from two kinds of evidence:
+
+- **Marks on the object.** Every DNS record Postbox writes carries `Postbox ·` in its comment, and the rules it creates are named `Postbox — …`. That evidence travels with the object, so it stays true for deployments that predate this mechanism and survives someone editing a record by hand.
+- **A memory, written once.** Whether Email Routing was already enabled, or a destination address already verified, leaves no mark. `infra/provenance.ts` records it on the first deploy, before a single resource is created, and never rewrites it — every later run would only see Postbox's own handiwork. A deployment that already existed when this was added records "cannot tell" instead of guessing.
+
+Unknown resolves to keeping. The two outcomes are not comparable.
+
+There is no "forget this resource" command in Alchemy, but state is a directory of files, so `infra/teardown.ts` removes the state for anything being kept before `alchemy destroy` runs — the live object survives because the destroy cannot see it. Afterwards it puts back the catch-all rule Postbox took over, if there was one, since Postbox adopts that rule rather than creating it. `just down` prints the whole plan, both columns, before asking you to type the domain.
+
 ## Limits and deliberate trade-offs
 
 - **Sending**: whatever the active provider allows — 100/day and 3,000/month on Resend's free tier, reputation-scaled daily and 3,000/month included on Cloudflare. The sidebar shows the current position; a send that would exceed a hard cap fails with an explanation and keeps the draft.

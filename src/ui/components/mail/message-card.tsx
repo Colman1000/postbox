@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { Message } from "@shared/types.ts";
 import { api } from "@/lib/api.ts";
+import { mailtoFromClick } from "@/lib/mailto.ts";
 import { displayName, fileSize, fullDate, initials, shortDate } from "@/lib/format.ts";
 import { renderPlainText, sanitizeEmailHtml } from "@/lib/sanitize.ts";
 import { cn } from "@/lib/utils.ts";
@@ -41,6 +42,7 @@ export function MessageCard({
   onReply,
   onEditDraft,
   onCancelSchedule,
+  onMailto,
 }: {
   message: Message;
   self: string;
@@ -49,6 +51,8 @@ export function MessageCard({
   onReply: (mode: "reply" | "reply-all" | "forward") => void;
   onEditDraft: () => void;
   onCancelSchedule: () => void;
+  /** A `mailto:` link in the message body, handed back to the app. */
+  onMailto: (href: string) => void;
 }) {
   const [showImages, setShowImages] = useState(false);
 
@@ -171,6 +175,16 @@ export function MessageCard({
           {rendered.html ? (
             <div
               className="mail-body"
+              // A mail client that hands its own mailto: links to the operating
+              // system is not really your mail client. Caught here, at the
+              // container, because the click usually lands on something inside
+              // the anchor rather than the anchor itself.
+              onClick={(event) => {
+                const href = mailtoFromClick(event);
+                if (!href) return;
+                event.preventDefault();
+                onMailto(href);
+              }}
               // Sanitised in sanitizeEmailHtml: scripts, handlers, styles and
               // unknown URL schemes are removed before this point.
               dangerouslySetInnerHTML={{ __html: rendered.html }}

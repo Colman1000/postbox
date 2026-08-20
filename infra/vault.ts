@@ -33,6 +33,12 @@ export interface VaultData {
   appPasswordGenerated?: boolean;
   /** Passphrase Alchemy uses to encrypt secrets inside `.alchemy/`. */
   statePassword?: string;
+  /**
+   * What already existed in the account before the first deploy. Written once
+   * and never rewritten — see provenance.ts. `just down` reads it to decide
+   * what it is allowed to remove.
+   */
+  preexisting?: import("./provenance.ts").Provenance;
 }
 
 function vaultFile(stage: string): string {

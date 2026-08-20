@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils.ts";
 import type { ComposeSeed } from "./composer.tsx";
 import { seedReply } from "./mail-app.tsx";
 import { MessageCard } from "./message-card.tsx";
+import { parseMailto } from "@/lib/mailto.ts";
 import { SnoozeMenu } from "./snooze-menu.tsx";
 import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
@@ -131,7 +132,16 @@ export function ThreadView({
         <Action label="Archive" shortcut="E" onClick={() => onAction("archive")}>
           <ArchiveIcon />
         </Action>
-        <Action label="Move to trash" shortcut="#" onClick={() => onAction("trash")}>
+        {/*
+          In Trash there is nowhere further to move a conversation to, so the
+          same button means the only thing left it can mean. It is deliberately
+          worded as forever: this is the one action in the app with no undo.
+        */}
+        <Action
+          label={data.folder === "trash" ? "Delete forever" : "Move to trash"}
+          shortcut="#"
+          onClick={() => onAction(data.folder === "trash" ? "delete" : "trash")}
+        >
           <Trash2Icon />
         </Action>
         <Action
@@ -240,6 +250,10 @@ export function ThreadView({
                   })
                 }
                 onReply={(mode) => onCompose(seedReply(message, session.defaultFrom, mode))}
+                onMailto={(href) => {
+                  const seed = parseMailto(href);
+                  if (seed) onCompose({ ...seed, from: session.defaultFrom });
+                }}
                 onEditDraft={() =>
                   onCompose({
                     mode: "edit",

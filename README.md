@@ -76,7 +76,7 @@ That's the whole setup. Everything else is worked out for you: your account ID, 
 
 ![Sign in](docs/screenshots/signin-dark.png)
 
-When you're done, `just down` removes every single thing it made.
+When you're done, `just down` removes every single thing it made — and nothing else. If your zone was already receiving mail through Email Routing, or a DNS record was there before Postbox was, it says so before it asks you to confirm and then leaves those alone. Where it cannot tell whether something predates it, it keeps it: leaving a switch on is untidy, turning off mail for a domain is an incident.
 
 ### Why Resend is in here
 
@@ -111,7 +111,7 @@ The live channel is free for a specific reason worth knowing: the Durable Object
 | | |
 |---|---|
 | `just up` | Deploy. Safe to run again. |
-| `just down` | Remove everything, including the Resend key. |
+| `just down` | Remove what Postbox created, and only that. |
 | `just dev` | Run it locally. |
 | `just doctor` | Check your setup before deploying. |
 | `just verify` | Nudge Resend to re-check DNS. |

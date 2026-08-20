@@ -30,6 +30,7 @@ import {
 } from "alchemy/cloudflare";
 
 import { resolveConfig } from "./infra/config.ts";
+import { captureProvenance, classifyRecords } from "./infra/provenance.ts";
 import {
   ResendDomain,
   ResendSendingKey,
@@ -70,6 +71,18 @@ try {
   );
 }
 
+// ── 0b. What was here first ─────────────────────────────────────────────────
+// Recorded before a single resource is created, because after that the answer
+// is Postbox's own handiwork. `just down` reads this to decide what it is
+// allowed to take with it.
+const prior = await captureProvenance(api, {
+  stage: config.stage,
+  zoneId,
+  databaseName: config.names.database,
+  kvTitle: config.names.kv,
+  forwardTo: config.forwardTo,
+});
+
 // ── 1. Locally generated secrets ────────────────────────────────────────────
 // Generated once, reused forever. Regenerating the auth secret would sign
 // every existing session out, so it is deliberately sticky.
@@ -86,6 +99,8 @@ const db = await D1Database("mail-db", {
   name: config.names.database,
   migrationsDir: "./migrations",
   adopt: true,
+  // A database that was here first is not ours to drop, however it is named.
+  delete: prior.database !== true,
 });
 
 // Sessions, the undo-send buffer and per-address rate counters. All of it is
@@ -93,6 +108,7 @@ const db = await D1Database("mail-db", {
 const cache = await KVNamespace("cache", {
   title: config.names.kv,
   adopt: true,
+  delete: prior.kv !== true,
 });
 
 // ── 3. Outbound: whichever provider this deployment is configured for ───────
@@ -109,6 +125,9 @@ const sendingDomain = usingResend
       apiKey: config.resendApiKey,
       region: config.resendRegion,
       stage: config.stage,
+      // Deleting a domain we merely adopted would take the operator's other
+      // sending down with it.
+      preserve: prior.resendDomain !== false,
     })
   : undefined;
 
@@ -116,27 +135,49 @@ const sendingDomain = usingResend
 // Resend publishes its records under `send.<domain>` and
 // `<selector>._domainkey`, which is why they coexist with Email Routing's apex
 // MX records instead of fighting them.
+// Records that already existed and were not written by Postbox are updated in
+// place if they must be, but never deleted: `just down` has no business
+// removing DNS somebody else set up. Ownership is read off the live record's
+// comment, so it stays right even for deployments made before this existed.
+const wanted = sendingDomain?.records ?? [];
+const split = sendingDomain
+  ? await classifyRecords(api, zoneId, wanted)
+  : { ours: [], adopted: [] };
+
+const asRecord = (record: (typeof wanted)[number]) => ({
+  type: record.type,
+  name: record.name,
+  content: record.content,
+  priority: record.priority,
+  ttl: 1, // 1 = automatic
+  proxied: false,
+  comment: `Postbox · Resend ${record.purpose}`,
+});
+
 const sendingDns = sendingDomain
   ? await DnsRecords("resend-dns", {
       zoneId,
-      records: sendingDomain.records.map((record) => ({
-        type: record.type,
-        name: record.name,
-        content: record.content,
-        priority: record.priority,
-        ttl: 1, // 1 = automatic
-        proxied: false,
-        comment: `Postbox · Resend ${record.purpose}`,
-      })),
+      records: split.ours.map(asRecord),
     })
   : undefined;
+
+const adoptedDns =
+  sendingDomain && split.adopted.length > 0
+    ? await DnsRecords("resend-dns-adopted", {
+        zoneId,
+        records: split.adopted.map(asRecord),
+        delete: false,
+      })
+    : undefined;
 
 const verification =
   sendingDomain && sendingDns
     ? await ResendVerification("resend-verify", {
         domainId: sendingDomain.domainId,
         apiKey: config.resendApiKey,
-        dependsOn: sendingDns.records.map((r) => r.id).join(","),
+        dependsOn: [...sendingDns.records, ...(adoptedDns?.records ?? [])]
+          .map((r) => r.id)
+          .join(","),
       })
     : undefined;
 
@@ -264,7 +305,8 @@ if (app.phase === "up") {
     sendingStatus: usingResend ? (verification?.status ?? "pending") : "verified",
     forwardTo: forwardAddress?.email,
     forwardVerified: forwardAddress?.verified ?? false,
-    dnsRecordCount: sendingDns?.records.length ?? 0,
+    dnsRecordCount:
+      (sendingDns?.records.length ?? 0) + (adoptedDns?.records.length ?? 0),
     vaultRead: readVault(config.stage),
   });
 }

@@ -8,6 +8,7 @@ import { useIsMobile } from "@/hooks/use-media-query.ts";
 import { useSearch, useThreadAction, useThreads } from "@/lib/queries.ts";
 import { useMailTitle, useNewMail } from "@/hooks/use-new-mail.ts";
 import { lazyWithReload } from "@/lib/lazy.ts";
+import { seedFromLocation } from "@/lib/mailto.ts";
 import { ErrorBoundary } from "@/components/error-boundary.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { ComposeSeed } from "./composer.tsx";
@@ -81,6 +82,16 @@ export function MailApp({ session }: { session: SessionInfo }) {
   }, []);
   const { unread, live } = useNewMail({ onOpenThread: openArrival });
   useMailTitle(unread, session.domain);
+
+  // Launched from a mailto: link — the browser's protocol handler, or a link
+  // anywhere that points here. Read once and then scrubbed out of the URL, so
+  // refreshing the page does not reopen the same half-written message.
+  useEffect(() => {
+    const seed = seedFromLocation(window.location.search);
+    if (!seed) return;
+    setCompose({ ...seed, from: session.defaultFrom });
+    history.replaceState(null, "", window.location.pathname);
+  }, [session.defaultFrom]);
 
   // Debounce so every keystroke does not become an FTS query.
   useEffect(() => {
@@ -243,7 +254,8 @@ export function MailApp({ session }: { session: SessionInfo }) {
       j: () => move(1),
       k: () => move(-1),
       e: () => runAction("archive"),
-      "#": () => runAction("trash"),
+      // In Trash the same key means the only thing left it can mean.
+      "#": () => runAction(view.folder === "trash" ? "delete" : "trash"),
       "!": () => runAction("spam"),
       s: () => toggleStar(),
       u: () => runAction("unread"),
