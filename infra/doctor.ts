@@ -4,7 +4,7 @@
  * Every check reports a fix, not just a failure.
  */
 import { resolveConfig, loadDotEnv, type PostboxConfig } from "./config.ts";
-import { readVault, vaultPath } from "./vault.ts";
+import { ensureStatePassword, readVault, vaultPath } from "./vault.ts";
 
 const ok = (s: string) => `  \x1b[32m✓\x1b[0m ${s}`;
 const bad = (s: string) => `  \x1b[31m✗\x1b[0m ${s}`;
@@ -97,6 +97,23 @@ if (vault.resendSendingKey) {
   lines.push(ok(`Send-only Resend key cached in ${vaultPath(config.stage)}`));
 } else {
   lines.push(ok("Send-only Resend key will be minted on first deploy"));
+}
+
+// The key that opens Alchemy's own state. Deploying without it is the one
+// failure that cannot be repaired by simply re-running.
+try {
+  ensureStatePassword("postbox", config.stage);
+  lines.push(
+    process.env.ALCHEMY_PASSWORD
+      ? ok("State key supplied by ALCHEMY_PASSWORD")
+      : ok(`State key cached in ${vaultPath(config.stage)}`),
+  );
+} catch (error) {
+  fatal = true;
+  lines.push(bad("Deploy state is encrypted with a key this machine no longer has"));
+  for (const line of String((error as Error).message).split("\n")) {
+    if (line.trim()) lines.push(hint(line.trim()));
+  }
 }
 
 console.log(`\n${lines.join("\n")}\n`);

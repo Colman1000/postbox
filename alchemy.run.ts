@@ -34,12 +34,24 @@ import {
   ResendSendingKey,
   ResendVerification,
 } from "./infra/resend.ts";
-import { readVault, randomPassword, randomSecret, updateVault } from "./infra/vault.ts";
+import {
+  ensureStatePassword,
+  readVault,
+  randomPassword,
+  randomSecret,
+  updateVault,
+} from "./infra/vault.ts";
 import { printSummary } from "./infra/report.ts";
 
 const config = resolveConfig();
 
-const app = await alchemy("postbox", { stage: config.stage });
+// Alchemy encrypts every secret it writes into `.alchemy/`, and refuses to
+// write one without a passphrase. That passphrase is generated on first run
+// and cached in `.secrets/`, so this is one more thing nobody has to invent.
+const app = await alchemy("postbox", {
+  stage: config.stage,
+  password: ensureStatePassword("postbox", config.stage),
+});
 
 // ── 0. Fail fast, and fail legibly ──────────────────────────────────────────
 // Everything downstream assumes DOMAIN is a live zone on this account. Finding
@@ -141,7 +153,7 @@ const sendingKey = sendingDomain
 // ── 4. Inbound mail ─────────────────────────────────────────────────────────
 // Free and unlimited on the Workers Free plan. Enabling this writes the apex
 // MX + SPF records for receiving.
-const routing = await EmailRouting("email-routing", {
+await EmailRouting("email-routing", {
   zone: config.domain,
   enabled: true,
   skipWizard: true,
@@ -205,8 +217,9 @@ export const site = await Vite("postbox", {
 // Declared after the Worker so the rule has something to reference. A
 // catch-all means every address on the domain — sales@, hi@, typos — lands in
 // Postbox, which is what makes single-domain aliasing free.
+// `zone` here is a hostname, not an id — Alchemy looks the zone up for you.
 await EmailCatchAll("catch-all", {
-  zone: routing.zoneId,
+  zone: config.domain,
   name: "Postbox — deliver everything to the app",
   enabled: true,
   actions: [{ type: "worker", value: [config.names.worker] }],
@@ -217,7 +230,7 @@ await EmailCatchAll("catch-all", {
 // destination address verified and visible in the dashboard.
 if (forwardAddress) {
   await EmailRule("forward-postmaster", {
-    zone: routing.zoneId,
+    zone: config.domain,
     name: "Postbox — postmaster passthrough",
     enabled: true,
     priority: 1,

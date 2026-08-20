@@ -22,8 +22,11 @@ console.log(`
   \x1b[2mUI password\x1b[0m     ${vault.appPassword ?? "\x1b[2mnot provisioned\x1b[0m"}
   \x1b[2mResend key\x1b[0m      ${mask(vault.resendSendingKey)} \x1b[2m(send-only, scoped to ${config.domain})\x1b[0m
   \x1b[2mSession secret\x1b[0m  ${mask(vault.authSecret)}
+  \x1b[2mState key\x1b[0m       ${mask(vault.statePassword)} \x1b[2m(encrypts secrets in .alchemy/)\x1b[0m
   \x1b[2mResend domain\x1b[0m   ${vault.resendDomainId ?? "\x1b[2mnot provisioned\x1b[0m"}
 
-  \x1b[2mDeleting this file does not break the deployment, but the send-only key
-  becomes unrecoverable — the next \`just up\` mints a replacement.\x1b[0m
+  \x1b[2mDeleting this file does not break the running deployment, but the next
+  \`just up\` cannot read the state it already wrote: the send-only key is
+  unrecoverable and a replacement is minted. Back it up, or set
+  ALCHEMY_PASSWORD yourself if you would rather hold the state key elsewhere.\x1b[0m
 `);

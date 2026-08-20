@@ -31,6 +31,8 @@ export interface VaultData {
   appPassword?: string;
   /** True the first time we generated the password, so we print it once. */
   appPasswordGenerated?: boolean;
+  /** Passphrase Alchemy uses to encrypt secrets inside `.alchemy/`. */
+  statePassword?: string;
 }
 
 function vaultFile(stage: string): string {
@@ -101,6 +103,73 @@ export function deleteVault(stage: string): void {
     /* best effort */
   }
   fs.rmSync(file);
+}
+
+/**
+ * True if Alchemy has already written encrypted secrets for this stage.
+ *
+ * Encrypted values are stored as `{"@secret": "..."}`, so a substring check
+ * over the stage's state files is enough to tell "there is nothing to unlock
+ * yet" apart from "there is, and we have lost the key".
+ */
+function stateHasEncryptedSecrets(app: string, stage: string): boolean {
+  const dir = path.resolve(process.cwd(), ".alchemy", app, stage);
+  if (!fs.existsSync(dir)) return false;
+  return fs.readdirSync(dir).some((entry) => {
+    if (!entry.endsWith(".json")) return false;
+    try {
+      return fs.readFileSync(path.join(dir, entry), "utf8").includes('"@secret"');
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * The passphrase Alchemy encrypts its own state with.
+ *
+ * Alchemy refuses to write a secret it cannot encrypt, so a deploy without one
+ * fails at the first Worker binding. There is nothing for a human to decide
+ * here, so we generate one on first run and keep it in the vault next to
+ * everything else we provision. It has to stay put: state written under one
+ * passphrase cannot be read under another.
+ *
+ * ALCHEMY_PASSWORD wins if it is set, so CI can keep the key in its own
+ * secret store rather than in a file on a build machine.
+ */
+export function ensureStatePassword(app: string, stage: string): string {
+  const supplied = process.env.ALCHEMY_PASSWORD?.trim();
+  if (supplied) return supplied;
+
+  const cached = readVault(stage).statePassword;
+  if (cached) return cached;
+
+  // Minting a fresh passphrase here would leave the existing state
+  // undecryptable and the deploy would fail several resources in, on a crypto
+  // error that says nothing about the cause. Say it plainly instead.
+  if (stateHasEncryptedSecrets(app, stage)) {
+    throw new Error(
+      [
+        "",
+        `The deploy state in .alchemy/${app}/${stage} is encrypted, but the key that`,
+        `opens it is missing — ${vaultPath(stage)} was deleted or moved.`,
+        "",
+        "  Restore that file from a backup, or set ALCHEMY_PASSWORD if you kept",
+        "  the key elsewhere.",
+        "",
+        "  If it is gone for good, discard the encrypted values and re-provision",
+        "  them (this mints a new Resend key and signs out open sessions):",
+        "",
+        `    npx alchemy deploy ./alchemy.run.ts --force --erase-secrets`,
+        "",
+      ].join("\n"),
+    );
+  }
+
+  return updateVault(stage, (current) => ({
+    ...current,
+    statePassword: randomSecret(),
+  })).statePassword!;
 }
 
 export function vaultPath(stage: string): string {
