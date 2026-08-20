@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Address, Folder, Message, SessionInfo, Thread } from "@shared/types.ts";
@@ -6,6 +6,9 @@ import { api } from "@/lib/api.ts";
 import { useHotkeys } from "@/hooks/use-hotkeys.ts";
 import { useIsMobile } from "@/hooks/use-media-query.ts";
 import { useSearch, useThreadAction, useThreads } from "@/lib/queries.ts";
+import { useMailTitle, useNewMail } from "@/hooks/use-new-mail.ts";
+import { lazyWithReload } from "@/lib/lazy.ts";
+import { ErrorBoundary } from "@/components/error-boundary.tsx";
 import { cn } from "@/lib/utils.ts";
 import type { ComposeSeed } from "./composer.tsx";
 import { Sidebar } from "./sidebar.tsx";
@@ -19,18 +22,19 @@ import { ThreadView } from "./thread-view.tsx";
  *
  * The composer pulls in a Markdown renderer and the palette pulls in cmdk;
  * neither is needed to render an inbox, so they load on first use instead of
- * on first paint.
+ * on first paint. `lazyWithReload` is what makes that safe across a deploy —
+ * see the note there.
  */
-const Composer = lazy(() =>
+const Composer = lazyWithReload(() =>
   import("./composer.tsx").then((m) => ({ default: m.Composer })),
 );
-const CommandPalette = lazy(() =>
+const CommandPalette = lazyWithReload(() =>
   import("./command-palette.tsx").then((m) => ({ default: m.CommandPalette })),
 );
-const SettingsDialog = lazy(() =>
+const SettingsDialog = lazyWithReload(() =>
   import("./settings-dialog.tsx").then((m) => ({ default: m.SettingsDialog })),
 );
-const ShortcutsDialog = lazy(() =>
+const ShortcutsDialog = lazyWithReload(() =>
   import("./shortcuts-dialog.tsx").then((m) => ({ default: m.ShortcutsDialog })),
 );
 
@@ -67,6 +71,16 @@ export function MailApp({ session }: { session: SessionInfo }) {
   const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
 
   const searchRef = useRef<HTMLInputElement>(null);
+
+  // Mail that arrives while you are here (or elsewhere): refreshes the lists,
+  // counts the unread for the tab title, and raises the alert you asked for.
+  const openArrival = useCallback((threadId: string) => {
+    setView({ folder: "inbox" });
+    setQuery("");
+    setSelectedId(threadId);
+  }, []);
+  const { unread } = useNewMail({ onOpenThread: openArrival });
+  useMailTitle(unread);
 
   // Debounce so every keystroke does not become an FTS query.
   useEffect(() => {
@@ -319,6 +333,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
         }
       />
 
+      <ErrorBoundary compact label="That dialog">
       <Suspense fallback={null}>
         {compose && (
           <Composer
@@ -349,6 +364,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
         )}
         {showShortcuts && <ShortcutsDialog open onOpenChange={setShowShortcuts} />}
       </Suspense>
+      </ErrorBoundary>
 
     </div>
   );

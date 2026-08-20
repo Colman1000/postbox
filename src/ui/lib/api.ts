@@ -5,6 +5,7 @@ import type {
   Folder,
   Identity,
   Label,
+  MailUpdate,
   Paginated,
   SendResult,
   SessionInfo,
@@ -171,5 +172,6 @@ export const api = {
     request<{ ok: true }>("/settings", { method: "PATCH", body: JSON.stringify(patch) }),
 
   stats: () => request<Stats>("/stats"),
+  updates: (since: number) => request<MailUpdate>(`/updates?since=${since}`),
   events: () => request<ActivityEvent[]>("/events"),
 };

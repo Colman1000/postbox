@@ -170,6 +170,30 @@ export interface Stats {
   };
 }
 
+/** One inbound message, as announced by the polling endpoint. */
+export interface Arrival {
+  id: string;
+  threadId: string;
+  subject: string;
+  snippet: string;
+  from: Address;
+  receivedAt: number;
+}
+
+/**
+ * The answer to "has anything arrived?", polled by every open tab.
+ *
+ * `now` is the server's clock, which the client sends back as `since` on the
+ * next poll — comparing against the browser's clock would double-announce or
+ * silently skip mail whenever the two disagree.
+ */
+export interface MailUpdate {
+  now: number;
+  /** Unread inbound messages in the inbox. Drives the tab title. */
+  unread: number;
+  arrivals: Arrival[];
+}
+
 export interface SessionInfo {
   authenticated: boolean;
   domain: string;

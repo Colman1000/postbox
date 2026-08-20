@@ -30,6 +30,7 @@ export const keys = {
   contacts: (q: string) => ["contacts", q] as const,
   settings: ["settings"] as const,
   events: ["events"] as const,
+  updates: ["updates"] as const,
 };
 
 export function useSession() {
@@ -196,6 +197,10 @@ export function useThreadAction(view: { folder: Folder }) {
     onSettled: (_data, _error, { ids }) => {
       client.invalidateQueries({ queryKey: ["threads"] });
       client.invalidateQueries({ queryKey: keys.stats });
+      // Reading or archiving changes the unread count, and the count is what
+      // the tab title shows — leaving it 15 seconds stale is 15 seconds of the
+      // title claiming mail you have already read.
+      client.invalidateQueries({ queryKey: keys.updates });
       for (const id of ids) client.invalidateQueries({ queryKey: keys.thread(id) });
     },
   });
@@ -205,6 +210,7 @@ export function useThreadAction(view: { folder: Folder }) {
 export function refreshAfterSend(client: QueryClient, threadId?: string) {
   client.invalidateQueries({ queryKey: ["threads"] });
   client.invalidateQueries({ queryKey: keys.stats });
+  client.invalidateQueries({ queryKey: keys.updates });
   client.invalidateQueries({ queryKey: keys.events });
   client.invalidateQueries({ queryKey: keys.contacts("") });
   if (threadId) client.invalidateQueries({ queryKey: keys.thread(threadId) });

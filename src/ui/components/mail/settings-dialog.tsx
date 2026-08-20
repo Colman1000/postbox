@@ -1,10 +1,19 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { PlusIcon, Trash2Icon } from "lucide-react";
+import { BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
 import { toast } from "sonner";
 import type { SessionInfo } from "@shared/types.ts";
 import { api, ApiError } from "@/lib/api.ts";
 import { fileSize, relativeTime } from "@/lib/format.ts";
+import {
+  notificationsSupported,
+  permission as notificationPermission,
+  playChime,
+  readPrefs,
+  requestPermission,
+  writePrefs,
+  type NotifyPrefs,
+} from "@/lib/notify.ts";
 import {
   keys,
   useEvents,
@@ -24,6 +33,7 @@ import {
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
+import { Switch } from "@/components/ui/switch.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 
@@ -51,6 +61,7 @@ export function SettingsDialog({
             <TabsTrigger value="identities">Addresses</TabsTrigger>
             <TabsTrigger value="labels">Labels</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
+            <TabsTrigger value="alerts">Alerts</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
 
@@ -63,6 +74,9 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="templates">
               <Templates />
+            </TabsContent>
+            <TabsContent value="alerts">
+              <Alerts />
             </TabsContent>
             <TabsContent value="activity">
               <Activity />
@@ -354,6 +368,124 @@ function Templates() {
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// ── alerts ───────────────────────────────────────────────────────────────────
+
+/**
+ * How this browser announces mail that arrives while the app is open.
+ *
+ * Both settings are per-device, and stored that way: notification permission
+ * is granted per-origin per-device by the browser itself, and whether a sound
+ * is welcome depends on the room you are in, not on the mailbox.
+ */
+function Alerts() {
+  const [prefs, setPrefs] = useState<NotifyPrefs>(() => readPrefs());
+  const [granted, setGranted] = useState<NotificationPermission>(() =>
+    notificationPermission(),
+  );
+
+  const supported = notificationsSupported();
+  const blocked = granted === "denied";
+
+  function update(patch: Partial<NotifyPrefs>) {
+    setPrefs((current) => writePrefs({ ...current, ...patch }));
+  }
+
+  async function toggleDesktop(on: boolean) {
+    if (!on) return update({ desktop: false });
+
+    // Chrome only shows the prompt from a gesture, which is exactly what this
+    // switch is — so the request belongs here and nowhere else.
+    const result = await requestPermission();
+    setGranted(result);
+    update({ desktop: result === "granted" });
+    if (result === "denied") {
+      toast.error("Your browser is blocking notifications for this site", {
+        description: "Allow them in the site settings, then switch this back on.",
+      });
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <p className="text-muted-foreground text-[12px] leading-relaxed">
+        The app checks for new mail every 15 seconds while this tab is open, and
+        once a minute when it is in the background. New messages appear in the
+        list on their own, and the unread count shows in the tab title — so a
+        background tab is enough to tell you something arrived.
+      </p>
+
+      <Row
+        icon={<BellIcon className="size-4" />}
+        title="Desktop notifications"
+        description={
+          !supported
+            ? "This browser does not support notifications."
+            : blocked
+              ? "Blocked by the browser. Allow notifications for this site to switch it on."
+              : "Shown only while Postbox is in the background — never while you are looking at it."
+        }
+        checked={prefs.desktop && granted === "granted"}
+        disabled={!supported || blocked}
+        onChange={toggleDesktop}
+      />
+
+      <Row
+        icon={<Volume2Icon className="size-4" />}
+        title="Sound"
+        description="A short chime when something lands."
+        checked={prefs.sound}
+        disabled={false}
+        onChange={(on) => {
+          update({ sound: on });
+          if (on) playChime();
+        }}
+      />
+
+      <Separator />
+
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          if (prefs.sound) playChime();
+          toast("Somebody", { description: "This is what a new message looks like" });
+        }}
+      >
+        Preview an alert
+      </Button>
+    </div>
+  );
+}
+
+function Row({
+  icon,
+  title,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border p-3">
+      <span className="text-muted-foreground mt-0.5">{icon}</span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px] font-medium">{title}</p>
+        <p className="text-muted-foreground mt-0.5 text-[12px] leading-relaxed">
+          {description}
+        </p>
+      </div>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
 }

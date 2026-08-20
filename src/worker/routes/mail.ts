@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type {
   AttachmentMeta,
   Folder,
+  MailUpdate,
   Paginated,
   Thread,
   ThreadDetail,
@@ -123,6 +124,72 @@ mail.get("/threads", async (c) => {
     hasMore,
   };
   return c.json(payload);
+});
+
+// ── new mail ────────────────────────────────────────────────────────────────
+
+/**
+ * "Has anything arrived?" — the endpoint the open tab polls.
+ *
+ * Deliberately the cheapest query in the app: two indexed reads and no joins,
+ * because it runs every few seconds in every open tab and pays for itself only
+ * by staying small. `since` is the client's high-water mark; the first poll of
+ * a session sends none, gets the count but no arrivals, and so cannot announce
+ * mail that was already sitting there before you opened the page.
+ */
+mail.get("/updates", async (c) => {
+  const now = Date.now();
+  const since = Number(c.req.query("since") ?? 0);
+
+  const unreadRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n
+       FROM messages
+      WHERE folder = 'inbox'
+        AND direction = 'inbound'
+        AND is_read = 0
+        AND (snoozed_until IS NULL OR snoozed_until <= ?)`,
+  )
+    .bind(now)
+    .first<{ n: number }>();
+
+  const update: MailUpdate = {
+    now,
+    unread: unreadRow?.n ?? 0,
+    arrivals: [],
+  };
+
+  if (!Number.isFinite(since) || since <= 0) return c.json(update);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, thread_id, subject, snippet, from_address, from_name, created_at
+       FROM messages
+      WHERE folder = 'inbox'
+        AND direction = 'inbound'
+        AND created_at > ?
+      ORDER BY created_at DESC
+      LIMIT 10`,
+  )
+    .bind(since)
+    .all<{
+      id: string;
+      thread_id: string;
+      subject: string;
+      snippet: string;
+      from_address: string;
+      from_name: string | null;
+      created_at: number;
+    }>();
+
+  update.arrivals = (results ?? []).map((row) => ({
+    id: row.id,
+    threadId: row.thread_id,
+    subject: row.subject,
+    snippet: row.snippet,
+    from: { address: row.from_address, name: row.from_name ?? undefined },
+    receivedAt: row.created_at,
+  }));
+
+  return c.json(update);
 });
 
 // ── search ──────────────────────────────────────────────────────────────────
