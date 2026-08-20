@@ -1,5 +1,6 @@
 import type {
   ActivityEvent,
+  AuditEntry,
   Contact,
   DraftInput,
   Folder,
@@ -174,4 +175,5 @@ export const api = {
   stats: () => request<Stats>("/stats"),
   updates: (since: number) => request<MailUpdate>(`/updates?since=${since}`),
   events: () => request<ActivityEvent[]>("/events"),
+  audit: (limit = 100) => request<AuditEntry[]>(`/audit?limit=${limit}`),
 };

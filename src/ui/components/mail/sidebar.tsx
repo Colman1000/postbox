@@ -13,6 +13,7 @@ import {
   PencilLineIcon,
   PlusIcon,
   SendIcon,
+  KeyboardIcon,
   SettingsIcon,
   ShieldAlertIcon,
   StarIcon,
@@ -63,6 +64,7 @@ export function Sidebar({
   onChangeView,
   onCompose,
   onOpenSettings,
+  onShowShortcuts,
   onToggle,
   variant = "rail",
 }: {
@@ -72,6 +74,7 @@ export function Sidebar({
   onChangeView: (view: MailView) => void;
   onCompose: () => void;
   onOpenSettings: () => void;
+  onShowShortcuts: () => void;
   onToggle: () => void;
   /**
    * `rail` is the collapsible desktop column; `sheet` is the same navigation
@@ -308,6 +311,10 @@ export function Sidebar({
             </DropdownMenuItem>
 
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onShowShortcuts}>
+              <KeyboardIcon /> Keyboard shortcuts
+              <Kbd className="ml-auto">?</Kbd>
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onOpenSettings}>
               <SettingsIcon /> Settings
             </DropdownMenuItem>

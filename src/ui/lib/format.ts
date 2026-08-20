@@ -78,6 +78,37 @@ export function relativeTime(timestamp: number): string {
   return formatter.format(Math.round(value), "year");
 }
 
+/**
+ * "Chrome on macOS" from a user-agent string.
+ *
+ * Deliberately coarse. The access log is scanned for the row that looks wrong,
+ * and "Safari on iPhone" answers that; a version number would only make every
+ * row longer and harder to scan past.
+ */
+export function deviceSummary(userAgent: string | null | undefined): string {
+  if (!userAgent) return "Unknown device";
+  const ua = userAgent;
+
+  const browser =
+    /\bEdg\//.test(ua) ? "Edge"
+    : /\bOPR\/|\bOpera\b/.test(ua) ? "Opera"
+    : /\bFirefox\//.test(ua) ? "Firefox"
+    : /\bChrome\/|\bCriOS\//.test(ua) ? "Chrome"
+    : /\bSafari\//.test(ua) ? "Safari"
+    : "Browser";
+
+  const platform =
+    /\biPhone\b/.test(ua) ? "iPhone"
+    : /\biPad\b/.test(ua) ? "iPad"
+    : /\bAndroid\b/.test(ua) ? "Android"
+    : /\bMac OS X\b|\bMacintosh\b/.test(ua) ? "macOS"
+    : /\bWindows\b/.test(ua) ? "Windows"
+    : /\bLinux\b/.test(ua) ? "Linux"
+    : null;
+
+  return platform ? `${browser} on ${platform}` : browser;
+}
+
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

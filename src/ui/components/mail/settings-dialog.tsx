@@ -4,7 +4,7 @@ import { BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
 import { toast } from "sonner";
 import type { SessionInfo } from "@shared/types.ts";
 import { api, ApiError } from "@/lib/api.ts";
-import { fileSize, relativeTime } from "@/lib/format.ts";
+import { deviceSummary, fileSize, fullDate, relativeTime } from "@/lib/format.ts";
 import {
   notificationsSupported,
   permission as notificationPermission,
@@ -16,12 +16,14 @@ import {
 } from "@/lib/notify.ts";
 import {
   keys,
+  useAudit,
   useEvents,
   useIdentities,
   useLabels,
   useStats,
   useTemplates,
 } from "@/lib/queries.ts";
+import { cn } from "@/lib/utils.ts";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Dialog,
@@ -62,6 +64,7 @@ export function SettingsDialog({
             <TabsTrigger value="labels">Labels</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
             <TabsTrigger value="alerts">Alerts</TabsTrigger>
+            <TabsTrigger value="access">Access</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
           </TabsList>
 
@@ -77,6 +80,9 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="alerts">
               <Alerts />
+            </TabsContent>
+            <TabsContent value="access">
+              <Access />
             </TabsContent>
             <TabsContent value="activity">
               <Activity />
@@ -486,6 +492,99 @@ function Row({
         </p>
       </div>
       <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+// ── access log ───────────────────────────────────────────────────────────────
+
+/** Sign-ins get the strongest treatment; a refused one strongest of all. */
+const ACTION_LABEL: Record<string, string> = {
+  "sign-in": "Signed in",
+  "sign-in-failed": "Wrong password",
+  "sign-in-blocked": "Locked out",
+  "sign-out": "Signed out",
+  change: "Changed",
+};
+
+/**
+ * Who was here, and what they did.
+ *
+ * The mailbox has one password, so the honest unit of "who" is the sign-in —
+ * hence the session tag on each row. What you are looking for is a row whose
+ * address or device is not yours.
+ */
+function Access() {
+  const audit = useAudit();
+  const rows = audit.data ?? [];
+
+  return (
+    <div className="space-y-4">
+      <p className="text-muted-foreground text-[12px] leading-relaxed">
+        Every sign-in, every refused password and every change made through the
+        app, newest first. Kept for 90 days, then deleted. Reading mail is not
+        recorded, and neither is what any message said.
+      </p>
+
+      {rows.length === 0 ? (
+        <p className="text-muted-foreground py-8 text-center text-[12px]">
+          Nothing recorded yet. Your next sign-in will show up here.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {rows.map((row) => {
+            const failed = row.action === "sign-in-failed" || row.action === "sign-in-blocked";
+            return (
+              <li
+                key={row.id}
+                className={cn(
+                  "flex flex-wrap items-baseline gap-x-2 gap-y-0.5 rounded-md px-2 py-1.5 text-[12px]",
+                  failed && "bg-destructive/10",
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-28 shrink-0 font-medium",
+                    failed && "text-destructive",
+                  )}
+                >
+                  {ACTION_LABEL[row.action] ?? row.action}
+                </span>
+
+                <span className="text-muted-foreground min-w-0 flex-1 truncate">
+                  {row.detail ?? "—"}
+                </span>
+
+                <span className="text-muted-foreground shrink-0 tabular-nums">
+                  {row.ip ?? "no address"}
+                  {row.country ? ` · ${row.country}` : ""}
+                </span>
+
+                <span className="text-muted-foreground shrink-0">
+                  {deviceSummary(row.userAgent)}
+                </span>
+
+                {row.sessionId && (
+                  <span
+                    className="text-muted-foreground/70 shrink-0 font-mono text-[10px]"
+                    title="Sign-in this action belonged to"
+                  >
+                    {row.sessionId}
+                  </span>
+                )}
+
+                <time
+                  dateTime={new Date(row.createdAt).toISOString()}
+                  title={fullDate(row.createdAt)}
+                  className="text-muted-foreground shrink-0 text-[11px]"
+                >
+                  {relativeTime(row.createdAt)}
+                </time>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

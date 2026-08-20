@@ -4,8 +4,10 @@ import {
   clearCookie,
   constantTimeEqual,
   createSession,
+  newSessionId,
   sessionCookie,
 } from "../lib/auth.ts";
+import { actorFrom, recordAudit } from "../lib/audit.ts";
 import type { App } from "./context.ts";
 
 /**
@@ -40,6 +42,11 @@ auth.post("/login", async (c) => {
   const attempts = Number((await c.env.CACHE.get(attemptKey)) ?? 0);
 
   if (attempts >= MAX_ATTEMPTS) {
+    // Worth a row of its own: repeated blocks from one address are the shape
+    // an attack makes in the log.
+    c.executionCtx.waitUntil(
+      recordAudit(c.env.DB, actorFrom(c), "sign-in-blocked", `${attempts} failed attempts`),
+    );
     return c.json(
       {
         error: "Too many attempts. Try again in 15 minutes.",
@@ -55,14 +62,24 @@ auth.post("/login", async (c) => {
     await c.env.CACHE.put(attemptKey, String(attempts + 1), {
       expirationTtl: LOCKOUT_SECONDS,
     });
+    c.executionCtx.waitUntil(
+      recordAudit(c.env.DB, actorFrom(c), "sign-in-failed", `attempt ${attempts + 1}`),
+    );
     // Deliberately vague, and deliberately slow enough to be uninteresting.
     await new Promise((r) => setTimeout(r, 400));
     return c.json({ error: "Incorrect password." }, 401);
   }
 
   await c.env.CACHE.delete(attemptKey);
-  const token = await createSession(c.env.AUTH_SECRET);
+  const sessionId = newSessionId();
+  const token = await createSession(c.env.AUTH_SECRET, sessionId);
   const secure = new URL(c.req.url).protocol === "https:";
+
+  // The one row that answers "who came in": stamped with the session id every
+  // later action in this sign-in will carry.
+  c.executionCtx.waitUntil(
+    recordAudit(c.env.DB, { ...actorFrom(c), sessionId }, "sign-in", "password accepted"),
+  );
 
   c.header("Set-Cookie", sessionCookie(token, secure));
   return c.json({ ok: true });
@@ -70,6 +87,9 @@ auth.post("/login", async (c) => {
 
 auth.post("/logout", (c) => {
   const secure = new URL(c.req.url).protocol === "https:";
+  if (c.get("authenticated")) {
+    c.executionCtx.waitUntil(recordAudit(c.env.DB, actorFrom(c), "sign-out", null));
+  }
   c.header("Set-Cookie", clearCookie(secure));
   return c.json({ ok: true });
 });

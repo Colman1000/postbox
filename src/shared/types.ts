@@ -170,6 +170,25 @@ export interface Stats {
   };
 }
 
+/**
+ * One row of the access log.
+ *
+ * With a single shared password there is no user to name, so the actor is the
+ * sign-in: `sessionId` ties every action back to the session it came from, and
+ * the address and device say where that session was.
+ */
+export interface AuditEntry {
+  id: string;
+  sessionId: string | null;
+  /** sign-in | sign-in-failed | sign-in-blocked | sign-out | change */
+  action: string;
+  detail: string | null;
+  ip: string | null;
+  country: string | null;
+  userAgent: string | null;
+  createdAt: number;
+}
+
 /** One inbound message, as announced by the polling endpoint. */
 export interface Arrival {
   id: string;

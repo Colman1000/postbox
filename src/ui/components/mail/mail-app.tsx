@@ -91,7 +91,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
   const searching = debouncedQuery.length >= 2;
   const listQuery = useThreads(view);
   const searchQuery = useSearch(debouncedQuery);
-  const act = useThreadAction({ folder: view.folder });
+  const act = useThreadAction({ folder: view.folder, starred: view.starred });
 
   const threads: Thread[] = useMemo(() => {
     if (searching) return searchQuery.data?.items ?? [];
@@ -168,6 +168,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
         delete: "Deleted permanently",
         snooze: "Snoozed",
         star: "Starred",
+        unstar: "Unstarred",
         unread: "Marked unread",
       };
       if (past[action]) {
@@ -186,9 +187,11 @@ export function MailApp({ session }: { session: SessionInfo }) {
                             : "inbox"
                           : action === "star"
                             ? "unstar"
-                            : action === "unread"
-                              ? "read"
-                              : "unsnooze",
+                            : action === "unstar"
+                              ? "star"
+                              : action === "unread"
+                                ? "read"
+                                : "unsnooze",
                     }),
                 }
               : undefined,
@@ -197,6 +200,21 @@ export function MailApp({ session }: { session: SessionInfo }) {
     },
     [act, targets, selectedId, threads, view.folder],
   );
+
+  /**
+   * S toggles, rather than only ever starring.
+   *
+   * With a mixed selection the useful reading is "star the rest", so it only
+   * unstars when every target is already starred — the same rule the toolbar
+   * button follows, so the two never disagree.
+   */
+  const toggleStar = useCallback(() => {
+    const ids = targets();
+    if (ids.length === 0) return;
+    const selection = threads.filter((t) => ids.includes(t.id));
+    const allStarred = selection.length > 0 && selection.every((t) => t.isStarred);
+    runAction(allStarred ? "unstar" : "star", undefined, ids);
+  }, [targets, threads, runAction]);
 
   const move = useCallback(
     (delta: number) => {
@@ -227,7 +245,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
       e: () => runAction("archive"),
       "#": () => runAction("trash"),
       "!": () => runAction("spam"),
-      s: () => runAction("star"),
+      s: () => toggleStar(),
       u: () => runAction("unread"),
       Escape: () => {
         if (checked.size > 0) setChecked(new Set());
@@ -261,6 +279,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
         onChangeView={changeView}
         onCompose={() => startCompose()}
         onOpenSettings={() => setShowSettings(true)}
+        onShowShortcuts={() => setShowShortcuts(true)}
         onToggle={() => setSidebarOpen((v) => !v)}
       />
 
@@ -281,6 +300,10 @@ export function MailApp({ session }: { session: SessionInfo }) {
             onOpenSettings={() => {
               setNavOpen(false);
               setShowSettings(true);
+            }}
+            onShowShortcuts={() => {
+              setNavOpen(false);
+              setShowShortcuts(true);
             }}
             onToggle={() => {}}
           />
@@ -317,6 +340,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
               onDensityChange={setDensity}
               onOpenNav={() => setNavOpen(true)}
               onCompose={() => startCompose()}
+              onShowShortcuts={() => setShowShortcuts(true)}
             />
           </div>
         }

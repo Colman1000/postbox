@@ -52,10 +52,19 @@ export async function constantTimeEqual(a: string, b: string): Promise<boolean> 
   return diff === 0;
 }
 
-export async function createSession(secret: string): Promise<string> {
+/** Short, non-secret handle for one sign-in. Groups its rows in the audit log. */
+export function newSessionId(): string {
+  return base64url(crypto.getRandomValues(new Uint8Array(6)));
+}
+
+export async function createSession(
+  secret: string,
+  sessionId = newSessionId(),
+): Promise<string> {
   const payload = base64url(
     encoder.encode(
       JSON.stringify({
+        sid: sessionId,
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
       }),
@@ -63,6 +72,49 @@ export async function createSession(secret: string): Promise<string> {
   );
   const signature = await crypto.subtle.sign("HMAC", await key(secret), encoder.encode(payload));
   return `${payload}.${base64url(signature)}`;
+}
+
+export interface SessionClaims {
+  /** Absent in tokens issued before the audit log existed. */
+  sid?: string;
+  iat?: number;
+  exp?: number;
+}
+
+/**
+ * Verify, and hand back the claims.
+ *
+ * `verifySession` answers only yes or no, which is all the gate needs; the
+ * audit log also needs to know *which* session is acting, and reading that
+ * from an unverified token would let anyone attribute their actions to
+ * someone else.
+ */
+export async function readSession(
+  secret: string,
+  token: string,
+): Promise<SessionClaims | null> {
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return null;
+
+  try {
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      await key(secret),
+      fromBase64url(signature),
+      encoder.encode(payload),
+    );
+    if (!valid) return null;
+
+    const claims = JSON.parse(
+      new TextDecoder().decode(fromBase64url(payload)),
+    ) as SessionClaims;
+    if (typeof claims.exp !== "number" || claims.exp <= Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return claims;
+  } catch {
+    return null;
+  }
 }
 
 export async function verifySession(secret: string, token: string): Promise<boolean> {

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env, Vars } from "./env.ts";
-import { readCookie, verifySession } from "./lib/auth.ts";
+import { readCookie, readSession } from "./lib/auth.ts";
+import { actorFrom, describeRequest, recordAudit } from "./lib/audit.ts";
 import { handleInboundEmail } from "./lib/inbound.ts";
 import { runScheduledWork } from "./lib/cron.ts";
 import { auth } from "./routes/auth.ts";
@@ -25,10 +26,24 @@ const app = new Hono<{ Bindings: Env; Variables: Vars }>();
 /** Endpoints reachable without a session. Everything else is gated. */
 const PUBLIC_PATHS = new Set(["/api/auth/login", "/api/auth/session", "/api/health"]);
 
+/**
+ * Requests that change something, and are therefore worth remembering.
+ *
+ * GETs are left out on purpose: logging every poll would bury the three rows
+ * that matter under thousands that do not, and reading your own mail is not
+ * the thing an access log exists to catch.
+ */
+const AUDITED_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+/** Mutations that are noise rather than history. */
+const AUDIT_IGNORED = new Set(["/api/drafts", "/api/auth/login", "/api/auth/logout"]);
+
 app.use("/api/*", async (c, next) => {
   const token = readCookie(c.req.header("cookie") ?? null);
-  const authenticated = token ? await verifySession(c.env.AUTH_SECRET, token) : false;
+  const claims = token ? await readSession(c.env.AUTH_SECRET, token) : null;
+  const authenticated = claims !== null;
   c.set("authenticated", authenticated);
+  c.set("sessionId", claims?.sid ?? null);
 
   if (!authenticated && !PUBLIC_PATHS.has(new URL(c.req.url).pathname)) {
     return c.json({ error: "Not signed in" }, 401);
@@ -38,7 +53,23 @@ app.use("/api/*", async (c, next) => {
   c.header("Cache-Control", "no-store");
   c.header("X-Content-Type-Options", "nosniff");
   c.header("Referrer-Policy", "no-referrer");
-  return next();
+
+  await next();
+
+  // Recorded after the fact, so the log holds what actually happened rather
+  // than what was attempted — and outside the response path, so an access log
+  // never costs the user latency. Sign-in and sign-out record themselves,
+  // since they are the two events that happen without a session in hand.
+  const path = new URL(c.req.url).pathname;
+  if (
+    authenticated &&
+    AUDITED_METHODS.has(c.req.method) &&
+    !AUDIT_IGNORED.has(path) &&
+    c.res.status < 400
+  ) {
+    const detail = c.get("auditDetail") ?? describeRequest(c.req.method, path);
+    c.executionCtx.waitUntil(recordAudit(c.env.DB, actorFrom(c), "change", detail));
+  }
 });
 
 app.get("/api/health", (c) => c.json({ ok: true, stage: c.env.STAGE }));

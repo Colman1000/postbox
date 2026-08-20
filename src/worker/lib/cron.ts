@@ -67,4 +67,17 @@ export async function runScheduledWork(env: Env): Promise<void> {
     const valid = summaries.filter((s): s is D1PreparedStatement => s !== null);
     if (valid.length > 0) await env.DB.batch(valid);
   }
+
+  // ── retention ─────────────────────────────────────────────────────────────
+  // The access log would otherwise grow without limit against a 5 GB database
+  // that is mostly meant to hold mail. Ninety days is long enough to notice a
+  // sign-in you did not make, and short enough to stay small. Once an hour is
+  // plenty for a delete that is usually a no-op.
+  if (new Date(now).getUTCMinutes() === 7) {
+    await env.DB.prepare("DELETE FROM audit WHERE created_at < ?")
+      .bind(now - AUDIT_RETENTION_MS)
+      .run();
+  }
 }
+
+const AUDIT_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;

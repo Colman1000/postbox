@@ -97,7 +97,7 @@ export const SHORTCUTS: { keys: string[]; label: string; group: string }[] = [
   { keys: ["f"], label: "Forward", group: "Actions" },
   { keys: ["e"], label: "Archive", group: "Actions" },
   { keys: ["#"], label: "Move to trash", group: "Actions" },
-  { keys: ["s"], label: "Star", group: "Actions" },
+  { keys: ["s"], label: "Star / unstar", group: "Actions" },
   { keys: ["u"], label: "Mark unread", group: "Actions" },
   { keys: ["b"], label: "Snooze", group: "Actions" },
   { keys: ["!"], label: "Report spam", group: "Actions" },
@@ -116,4 +116,5 @@ export const SHORTCUTS: { keys: string[]; label: string; group: string }[] = [
   { keys: ["⌘", "⇧", "Enter"], label: "Schedule send", group: "Compose" },
   { keys: ["Esc"], label: "Close composer", group: "Compose" },
   { keys: ["?"], label: "This list", group: "Help" },
+  { keys: ["⌘", "/"], label: "This list", group: "Help" },
 ];

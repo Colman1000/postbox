@@ -327,6 +327,10 @@ compose.post("/send", async (c) => {
     const summary = await recomputeThread(c.env.DB, threadId);
     if (summary) await summary.run();
 
+    c.set(
+      "auditDetail",
+      `scheduled a message to ${to.length} recipient(s) for ${new Date(body.scheduledAt).toISOString()}`,
+    );
     const result: SendResult = { messageId, threadId, scheduledAt: body.scheduledAt };
     return c.json(result);
   }
@@ -335,6 +339,10 @@ compose.post("/send", async (c) => {
   if (!outcome.ok) {
     return c.json({ error: outcome.error, messageId, threadId }, outcome.status);
   }
+
+  // Recipients, not content: enough to spot mail you did not send, without
+  // keeping a second copy of what it said.
+  c.set("auditDetail", `sent a message to ${to.map((t) => t.address).join(", ")}`);
 
   const result: SendResult = {
     messageId,

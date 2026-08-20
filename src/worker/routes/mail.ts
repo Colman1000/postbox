@@ -454,6 +454,8 @@ mail.post("/threads/actions", async (c) => {
   }
 
   statements.push(logEvent(c.env.DB, action, `${ids.length} conversation(s)`));
+  // The access log deserves the verb, not "POST /api/threads/actions".
+  c.set("auditDetail", `${action} ${ids.length} conversation(s)`);
   await c.env.DB.batch(statements);
 
   if (action !== "delete") {

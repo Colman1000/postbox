@@ -28,4 +28,11 @@ export interface Env {
 /** Hono context variables set by middleware. */
 export interface Vars {
   authenticated: boolean;
+  /** Which sign-in is acting, for the audit log. Null for older tokens. */
+  sessionId: string | null;
+  /**
+   * A better sentence for the audit log than method-and-path, set by routes
+   * that know what they just did. Read once the response is on its way out.
+   */
+  auditDetail?: string;
 }

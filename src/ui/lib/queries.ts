@@ -30,6 +30,7 @@ export const keys = {
   contacts: (q: string) => ["contacts", q] as const,
   settings: ["settings"] as const,
   events: ["events"] as const,
+  audit: ["audit"] as const,
   updates: ["updates"] as const,
 };
 
@@ -105,6 +106,9 @@ export const useSettings = () =>
 export const useEvents = () =>
   useQuery({ queryKey: keys.events, queryFn: api.events, staleTime: 20_000 });
 
+export const useAudit = () =>
+  useQuery({ queryKey: keys.audit, queryFn: () => api.audit(), staleTime: 20_000 });
+
 export function useContacts(query: string) {
   return useQuery({
     queryKey: keys.contacts(query),
@@ -114,8 +118,10 @@ export function useContacts(query: string) {
 }
 
 /** Which actions remove a conversation from the list you are looking at. */
-function removesFromView(action: ThreadAction, folder: Folder): boolean {
+function removesFromView(action: ThreadAction, folder: Folder, starred?: boolean): boolean {
   if (action === "delete") return true;
+  // Starred is a filter, not a folder: unstarring is what removes a row there.
+  if (action === "unstar") return starred === true;
   if (action === "archive") return folder === "inbox" || folder === "spam";
   if (action === "trash") return folder !== "trash";
   if (action === "spam") return folder === "inbox";
@@ -149,7 +155,7 @@ function patchThread(thread: Thread, action: ThreadAction, until?: number): Thre
  * reconciles with the server. On failure the whole snapshot is rolled back, so
  * a dropped request never leaves the UI lying.
  */
-export function useThreadAction(view: { folder: Folder }) {
+export function useThreadAction(view: { folder: Folder; starred?: boolean }) {
   const client = useQueryClient();
 
   return useMutation({
@@ -167,7 +173,7 @@ export function useThreadAction(view: { folder: Folder }) {
       await client.cancelQueries({ queryKey: ["threads"] });
       const snapshot = client.getQueriesData({ queryKey: ["threads"] });
       const idSet = new Set(ids);
-      const drop = removesFromView(action, view.folder);
+      const drop = removesFromView(action, view.folder, view.starred);
 
       client.setQueriesData<{ pages: { items: Thread[] }[] }>(
         { queryKey: ["threads"] },

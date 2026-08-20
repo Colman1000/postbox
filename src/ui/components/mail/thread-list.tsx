@@ -4,6 +4,7 @@ import {
   MenuIcon,
   PencilLineIcon,
   ClockIcon,
+  KeyboardIcon,
   LoaderCircleIcon,
   MailOpenIcon,
   PaperclipIcon,
@@ -55,6 +56,7 @@ export function ThreadList({
   onDensityChange,
   onOpenNav,
   onCompose,
+  onShowShortcuts,
 }: {
   title: string;
   threads: Thread[];
@@ -80,6 +82,7 @@ export function ThreadList({
   onOpenNav: () => void;
   /** Phone only: the compose button lives here rather than in a hidden rail. */
   onCompose: () => void;
+  onShowShortcuts: () => void;
 }) {
   const sentinel = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -115,6 +118,11 @@ export function ThreadList({
 
   const allChecked = threads.length > 0 && checked.size === threads.length;
   const someChecked = checked.size > 0;
+
+  // Starring a selection that is already entirely starred can only sensibly
+  // mean the opposite, which is also how the S key reads it.
+  const checkedAllStarred =
+    someChecked && threads.filter((t) => checked.has(t.id)).every((t) => t.isStarred);
 
   function toggle(id: string, shiftKey: boolean) {
     const next = new Set(checked);
@@ -204,8 +212,12 @@ export function ThreadList({
             <IconAction label="Mark unread" shortcut="U" onClick={() => onAction("unread")}>
               <MailOpenIcon />
             </IconAction>
-            <IconAction label="Star" shortcut="S" onClick={() => onAction("star")}>
-              <StarIcon />
+            <IconAction
+              label={checkedAllStarred ? "Unstar" : "Star"}
+              shortcut="S"
+              onClick={() => onAction(checkedAllStarred ? "unstar" : "star")}
+            >
+              <StarIcon className={cn(checkedAllStarred && "fill-current")} />
             </IconAction>
             <SnoozeMenu onSnooze={(until) => onAction("snooze", until)}>
               <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
@@ -243,6 +255,23 @@ export function ThreadList({
             <Button
               variant="ghost"
               size="icon-sm"
+              className="text-muted-foreground max-md:hidden"
+              onClick={onShowShortcuts}
+              aria-label="Keyboard shortcuts"
+            >
+              <KeyboardIcon />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent className="flex items-center gap-1.5">
+            Keyboard shortcuts <Kbd>?</Kbd>
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
               className="text-muted-foreground"
               onClick={onRefresh}
             >
@@ -269,7 +298,12 @@ export function ThreadList({
             ))}
           </ul>
         ) : threads.length === 0 ? (
-          <EmptyState folder={view.folder} searching={query.trim().length >= 2} />
+          <EmptyState
+            folder={view.folder}
+            searching={query.trim().length >= 2}
+            onCompose={onCompose}
+            onShowShortcuts={onShowShortcuts}
+          />
         ) : (
           <ul className="divide-y">
             {threads.map((thread) => (
@@ -282,6 +316,9 @@ export function ThreadList({
                 checked={checked.has(thread.id)}
                 onSelect={() => onSelect(thread)}
                 onToggle={(shiftKey) => toggle(thread.id, shiftKey)}
+                onToggleStar={() =>
+                  onAction(thread.isStarred ? "unstar" : "star", undefined, [thread.id])
+                }
                 onSwipeArchive={
                   view.folder === "inbox" || view.folder === "archive"
                     ? () => onSwipeArchive(thread.id, view.folder === "archive")
@@ -325,6 +362,7 @@ function ThreadRow({
   checked,
   onSelect,
   onToggle,
+  onToggleStar,
   onSwipeArchive,
 }: {
   thread: Thread;
@@ -334,6 +372,7 @@ function ThreadRow({
   checked: boolean;
   onSelect: () => void;
   onToggle: (shiftKey: boolean) => void;
+  onToggleStar: () => void;
   /** Absent in folders where archiving is meaningless (Trash, Drafts…). */
   onSwipeArchive?: () => void;
 }) {
@@ -482,9 +521,36 @@ function ThreadRow({
             )}
           </span>
 
-          {thread.isStarred && (
-            <StarIcon className="fill-foreground text-foreground size-3 shrink-0" />
-          )}
+          {/*
+            A button, not an ornament. It stays in the layout unstarred but
+            invisible until the row is hovered or focused, so a list of
+            unstarred mail stays quiet while the target is always in the same
+            place — and starred rows keep showing it whatever the pointer does.
+          */}
+          <button
+            type="button"
+            onClick={(event) => {
+              // The row itself opens the conversation; starring must not.
+              event.stopPropagation();
+              onToggleStar();
+            }}
+            aria-label={thread.isStarred ? "Unstar conversation" : "Star conversation"}
+            aria-pressed={thread.isStarred}
+            className={cn(
+              "shrink-0 rounded-sm p-0.5 transition-opacity",
+              "focus-visible:ring-ring/40 outline-none focus-visible:ring-2",
+              thread.isStarred
+                ? "opacity-100"
+                : "opacity-0 group-hover:opacity-60 hover:!opacity-100 focus-visible:opacity-100 max-md:opacity-40",
+            )}
+          >
+            <StarIcon
+              className={cn(
+                "size-3",
+                thread.isStarred ? "fill-foreground text-foreground" : "text-muted-foreground",
+              )}
+            />
+          </button>
           {thread.hasAttachments && (
             <PaperclipIcon className="text-muted-foreground size-3 shrink-0" />
           )}

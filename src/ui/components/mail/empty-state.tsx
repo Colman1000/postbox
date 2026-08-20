@@ -9,6 +9,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import type { Folder } from "@shared/types.ts";
+import { Kbd } from "@/components/ui/kbd.tsx";
 
 /**
  * Empty is a state, not an error.
@@ -54,7 +55,17 @@ const COPY: Record<Folder, { icon: typeof InboxIcon; title: string; body: string
   },
 };
 
-export function EmptyState({ folder, searching }: { folder: Folder; searching: boolean }) {
+export function EmptyState({
+  folder,
+  searching,
+  onCompose,
+  onShowShortcuts,
+}: {
+  folder: Folder;
+  searching: boolean;
+  onCompose?: () => void;
+  onShowShortcuts?: () => void;
+}) {
   if (searching) {
     return (
       <Frame icon={<SearchXIcon />} title="No matches">
@@ -65,9 +76,55 @@ export function EmptyState({ folder, searching }: { folder: Folder; searching: b
 
   const copy = COPY[folder] ?? COPY.inbox;
   return (
-    <Frame icon={<copy.icon />} title={copy.title}>
+    <Frame
+      icon={<copy.icon />}
+      title={copy.title}
+      /*
+        An empty folder is the calmest moment in the app and the likeliest one
+        to be someone's first — so it is where the two keys worth knowing get
+        introduced. They are buttons as well as hints: a shortcut you cannot
+        find any other way is not discoverable, it is folklore.
+      */
+      footer={
+        (onCompose || onShowShortcuts) && (
+          <div className="mt-4 flex items-center justify-center gap-1">
+            {onCompose && (
+              <Hint onClick={onCompose} keyLabel="C">
+                Compose
+              </Hint>
+            )}
+            {onShowShortcuts && (
+              <Hint onClick={onShowShortcuts} keyLabel="?">
+                Shortcuts
+              </Hint>
+            )}
+          </div>
+        )
+      }
+    >
       {copy.body}
     </Frame>
+  );
+}
+
+function Hint({
+  keyLabel,
+  onClick,
+  children,
+}: {
+  keyLabel: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="text-muted-foreground hover:text-foreground hover:bg-accent focus-visible:ring-ring/40 flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] transition-colors outline-none focus-visible:ring-2"
+    >
+      <Kbd>{keyLabel}</Kbd>
+      {children}
+    </button>
   );
 }
 
@@ -75,10 +132,12 @@ function Frame({
   icon,
   title,
   children,
+  footer,
 }: {
   icon: React.ReactNode;
   title: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-col items-center justify-center px-8 py-20 text-center">
@@ -89,6 +148,7 @@ function Frame({
       <p className="text-muted-foreground mt-1 max-w-[16rem] text-[12px] leading-relaxed">
         {children}
       </p>
+      {footer}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type {
   ActivityEvent,
+  AuditEntry,
   Contact,
   Folder,
   Identity,
@@ -373,6 +374,52 @@ workspace.get("/stats", async (c) => {
     },
   };
   return c.json(stats);
+});
+
+// ── access log ──────────────────────────────────────────────────────────────
+
+/**
+ * Who was here, and what they changed.
+ *
+ * Newest first and capped, because this is a thing you scan rather than page
+ * through — if the answer is not near the top, the question is usually "when
+ * did this start", which the date on the last row answers just as well.
+ */
+workspace.get("/audit", async (c) => {
+  const limit = Math.min(Number(c.req.query("limit") ?? 100), 250);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, session_id, action, detail, ip, country, user_agent, created_at
+       FROM audit
+      ORDER BY created_at DESC
+      LIMIT ?`,
+  )
+    .bind(limit)
+    .all<{
+      id: string;
+      session_id: string | null;
+      action: string;
+      detail: string | null;
+      ip: string | null;
+      country: string | null;
+      user_agent: string | null;
+      created_at: number;
+    }>();
+
+  return c.json(
+    (results ?? []).map(
+      (row): AuditEntry => ({
+        id: row.id,
+        sessionId: row.session_id,
+        action: row.action,
+        detail: row.detail,
+        ip: row.ip,
+        country: row.country,
+        userAgent: row.user_agent,
+        createdAt: row.created_at,
+      }),
+    ),
+  );
 });
 
 // ── activity ────────────────────────────────────────────────────────────────
