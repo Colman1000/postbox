@@ -29,13 +29,15 @@ just up
 
 **Every address works immediately.** There are no aliases to create. `hi@`, `billing@`, `press@`, and the typo somebody made last Tuesday all land in the same inbox, and you can send as any of them. That's a catch-all rule doing the work, and it's free.
 
-**It's built for the keyboard.** `c` to write, `e` to archive, `j`/`k` to move, `g i` for the inbox, `⌘K` for everything else. The palette doubles as search, so finding a two-year-old thread is one keystroke and three letters.
+**It's built for the keyboard.** `c` to write, `e` to archive, `j`/`k` to move, `g i` for the inbox, `⌘K` for everything else, and `?` for the list of all of them — which is also a button in the toolbar, because a shortcut you can only find by already knowing it is folklore rather than a feature. The palette doubles as search, so finding a two-year-old thread is one keystroke and three letters.
 
 ![Command palette](docs/screenshots/command-palette.png)
 
 **Mail arrives, not eventually.** New messages appear the moment they land — no refresh, no waiting for a timer. A Durable Object holds a socket open to the tab and rings it when something arrives, and the tab title carries the unread count and your domain, so `(3) yourdomain.com · Postbox` in a background tab is enough to tell you. Desktop notifications and a chime are a switch away in Settings → Alerts. If the socket ever drops, the app quietly falls back to checking every fifteen seconds until it comes back.
 
 **Writing is quick and forgiving.** Markdown in, properly formatted mail out. Recipients autocomplete from people you actually correspond with, because the address book builds itself from your mail. Drafts save as you type. Undo send gives you eight seconds to change your mind, and if you close the tab in that window the message still goes, rather than vanishing.
+
+A `mailto:` link in a message opens the composer here, filled in with whatever the link asked for — a mail client that hands its own links to another program is not really your mail client. Settings can take the rest of the browser's `mailto:` links too, so writing to an address anywhere lands in Postbox.
 
 ![Composer](docs/screenshots/composer-dark.png)
 
@@ -51,7 +53,7 @@ just up
   <img src="docs/screenshots/mobile-drawer.png" width="270" alt="Navigation drawer on mobile">
 </p>
 
-There's also send later, snooze, labels, templates, per-address signatures, starring, full-text search, attachments, light and dark, and a running count of how many sends you have left today.
+There's also send later, snooze, labels, templates, per-address signatures, starring, full-text search, attachments, light and dark, a Trash that empties for good when you ask it to, and a running count of how many sends you have left today.
 
 ## Setup
 
