@@ -179,6 +179,27 @@ function stripRule(rule: CatchAllRule): CatchAllRule {
   };
 }
 
+/**
+ * Whether a record of this type and name already exists at all, regardless of
+ * who wrote it.
+ *
+ * Used for records Postbox will only ever *add* — a DMARC policy someone
+ * already published is a decision about their whole domain, and quietly
+ * replacing it with a weaker one would be worse than not writing it at all.
+ */
+export async function recordExists(
+  api: CloudflareApi,
+  zoneId: string,
+  type: string,
+  name: string,
+): Promise<boolean> {
+  const matches = await json<unknown[]>(
+    api,
+    `/zones/${zoneId}/dns_records?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`,
+  );
+  return (matches ?? []).length > 0;
+}
+
 export interface WantedRecord {
   type: string;
   name: string;

@@ -30,7 +30,7 @@ import {
 } from "alchemy/cloudflare";
 
 import { resolveConfig } from "./infra/config.ts";
-import { captureProvenance, classifyRecords } from "./infra/provenance.ts";
+import { captureProvenance, classifyRecords, recordExists } from "./infra/provenance.ts";
 import {
   ResendDomain,
   ResendSendingKey,
@@ -139,13 +139,34 @@ const sendingDomain = usingResend
 // place if they must be, but never deleted: `just down` has no business
 // removing DNS somebody else set up. Ownership is read off the live record's
 // comment, so it stays right even for deployments made before this existed.
-const wanted = sendingDomain?.records ?? [];
+// DMARC is the record nobody writes and every receiver looks for. Without one
+// a domain has no published policy, and mail from a new domain with no policy
+// is exactly the shape of mail that lands in spam — so Postbox publishes one
+// if, and only if, the domain does not already have its own. A policy already
+// there is a decision about the whole domain, quite possibly stricter than
+// ours, and replacing it silently would be worse than never writing it.
+const dmarcName = `_dmarc.${config.domain}`;
+const dmarcAlready = usingResend ? await recordExists(api, zoneId, "TXT", dmarcName) : true;
+
+const dmarcRecord = dmarcAlready
+  ? []
+  : [
+      {
+        type: "TXT" as const,
+        name: dmarcName,
+        content: `v=DMARC1; p=${config.dmarcPolicy}; adkim=r; aspf=r`,
+        priority: undefined,
+        purpose: "DMARC policy",
+      },
+    ];
+
+const wanted = [...(sendingDomain?.records ?? []), ...dmarcRecord];
 const split = sendingDomain
   ? await classifyRecords(api, zoneId, wanted)
-  : { ours: [], adopted: [] };
+  : { ours: [] as typeof wanted, adopted: [] as typeof wanted };
 
 const asRecord = (record: (typeof wanted)[number]) => ({
-  type: record.type,
+  type: record.type as "TXT" | "MX" | "CNAME" | "A" | "AAAA",
   name: record.name,
   content: record.content,
   priority: record.priority,

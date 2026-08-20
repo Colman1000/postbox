@@ -34,6 +34,11 @@ export interface PostboxConfig {
    * ask for is a liability, not a feature.
    */
   workersDevUrl: boolean;
+  /**
+   * DMARC policy to publish when the domain has none: "none", "quarantine" or
+   * "reject". Postbox never replaces a policy that is already there.
+   */
+  dmarcPolicy: "none" | "quarantine" | "reject";
   /** Operator-supplied UI password, if any. */
   appPassword?: string;
   /** Explicit Cloudflare account, if the token spans several. */
@@ -153,6 +158,13 @@ export function resolveConfig(): PostboxConfig {
     problems.push(`FORWARD_TO "${forwardTo}" is not a valid email address.`);
   }
 
+  const dmarcPolicy = (env("DMARC_POLICY") ?? "none").toLowerCase();
+  if (!["none", "quarantine", "reject"].includes(dmarcPolicy)) {
+    problems.push(
+      `DMARC_POLICY "${dmarcPolicy}" must be one of: none, quarantine, reject.`,
+    );
+  }
+
   const resendRegion = env("RESEND_REGION") ?? "us-east-1";
   if (!RESEND_REGIONS.includes(resendRegion as (typeof RESEND_REGIONS)[number])) {
     problems.push(
@@ -194,6 +206,7 @@ export function resolveConfig(): PostboxConfig {
     mailProvider,
     resendRegion,
     resendApiKey: resendApiKey ?? "",
+    dmarcPolicy: dmarcPolicy as PostboxConfig["dmarcPolicy"],
     workersDevUrl: (env("WORKERS_DEV_URL") ?? "false").toLowerCase() === "true",
     appPassword: env("APP_PASSWORD"),
     accountId: env("CLOUDFLARE_ACCOUNT_ID"),

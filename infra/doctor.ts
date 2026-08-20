@@ -91,6 +91,30 @@ if (resendRes.ok) {
   lines.push(warn(`Resend returned ${resendRes.status} — could not confirm the key`));
 }
 
+// ── Deliverability ──────────────────────────────────────────────────────────
+// The question this answers is "will what I send be read", which is worth as
+// much as whether the deploy worked.
+try {
+  const dmarc = await fetch(
+    `https://cloudflare-dns.com/dns-query?name=_dmarc.${config.domain}&type=TXT`,
+    { headers: { accept: "application/dns-json" } },
+  );
+  const body = (await dmarc.json()) as { Answer?: { data?: string }[] };
+  const policy = (body.Answer ?? [])
+    .map((a) => (a.data ?? "").replace(/^"|"$/g, ""))
+    .find((value) => value.toLowerCase().startsWith("v=dmarc1"));
+
+  if (policy) {
+    const mode = /p=(\w+)/i.exec(policy)?.[1] ?? "none";
+    lines.push(ok(`DMARC published for ${config.domain} (p=${mode})`));
+  } else {
+    lines.push(warn(`No DMARC record for ${config.domain} — your mail is likelier to be filtered`));
+    lines.push(hint("`just up` publishes one. Set DMARC_POLICY to choose the policy."));
+  }
+} catch {
+  lines.push(warn("Could not check DMARC — DNS lookup failed"));
+}
+
 // ── Local state ─────────────────────────────────────────────────────────────
 const vault = readVault(config.stage);
 if (vault.resendSendingKey) {
