@@ -16,19 +16,33 @@ Reference notes for anyone modifying or deploying this. For getting started, see
                          │  · Hono JSON API (/api/*)   │
                          │  · email() handler          │
                          │  · scheduled() cron         │
-                         └──────┬───────────────┬──────┘
-                                │               │
-                          ┌─────▼─────┐   ┌─────▼──────┐
-                          │  D1       │   │  KV        │
-                          │  mail     │   │  sessions  │
-                          └───────────┘   └────────────┘
-                                │
-                          ┌─────▼──────┐
-   outbound mail ◄────────│  Resend    │
-                          └────────────┘
+                         └───┬─────────┬──────────┬────┘
+                             │         │          │
+                       ┌─────▼───┐ ┌───▼────┐ ┌───▼──────────┐
+                       │  D1     │ │  KV    │ │ Durable      │
+                       │  mail   │ │ session│ │ Object       │
+                       └────┬────┘ └────────┘ │ "mailbox"    │
+                            │                 └───┬──────────┘
+                      ┌─────▼──────┐              │ ws
+   outbound mail ◄────│  Resend    │        browser tabs
+                      └────────────┘
 ```
 
 One Worker with three entry points: `fetch` serves the UI and the API, `email` receives, `scheduled` ticks once a minute for send-later and snooze. They share a database binding and the same threading code, so a message looks identical however it arrived.
+
+## The live channel
+
+A Worker cannot push to a browser: the `email()` invocation that receives your mail shares nothing with the `fetch()` invocation serving the tab that wants to know about it. A Durable Object is the one address both can reach, so `src/worker/mailbox.ts` is where an open tab waits.
+
+It is a doorbell, not a mailbox. The message it broadcasts says only `{"type":"mail"}` — the tab then requests `/api/updates`, exactly as it does when polling. That keeps one definition of "new" on the server, keeps subjects and senders out of a second system, and makes the socket optional: it drops, the poll underneath speeds back up from five minutes to fifteen seconds, and nothing is lost but latency.
+
+Three details keep it inside the free plan, and all three are load-bearing:
+
+- **`acceptWebSocket()`, not `accept()`.** Hibernation lets the object be evicted while its sockets stay connected, so an idle mailbox is billed no duration. A plainly accepted socket bills wall-clock for its whole life — about 11,000 of the free plan's 13,000 GB-s per day for one open tab.
+- **`setWebSocketAutoResponse()` for keepalives.** Pings are answered by the runtime without waking the object, so a 30-second heartbeat costs no duration either.
+- **One object, named `mailbox`.** There is one inbox; every tab watching it wants the same doorbell. Sharding would multiply the objects billed without adding a thing.
+
+The same reasoning rules out server-sent events, which would otherwise be simpler: an SSE stream has to be held by something, there is no hibernation for it, and holding it awake is the 11,000 GB-s case above.
 
 ## Why Workers and not Pages
 
@@ -106,8 +120,9 @@ migrations/             D1 schema, applied automatically on deploy
 src/
   shared/types.ts       the contract between Worker and UI
   worker/
-    index.ts            fetch / email / scheduled
-    lib/                auth, threading, inbound parsing, cron
+    index.ts            fetch / email / scheduled, and the /api/live upgrade
+    mailbox.ts          the Durable Object tabs hold a socket to
+    lib/                auth, audit log, threading, inbound parsing, cron
     lib/mail/           sending providers behind one interface
     routes/             auth · mail · compose · workspace
   ui/
@@ -161,7 +176,9 @@ Search is a standalone FTS5 table written by the Worker in the same batch as the
 
 ## Security
 
-- One password gates the whole app. Sessions are stateless HMAC tokens, so rotating `AUTH_SECRET` revokes every session. Failed sign-ins are rate-limited per IP.
+- One password gates the whole app. Sessions are stateless HMAC tokens carrying a short session id, so rotating `AUTH_SECRET` revokes every session. Failed sign-ins are rate-limited per IP.
+- The `audit` table records sign-ins, refused passwords, lockouts and every mutating API request, with address, country, device and the session id that ties them together. Mutations are logged by middleware rather than at each call site, so a route added later is covered without anyone remembering to. Reads are not logged and no message content is stored; a cron sweep drops rows past 90 days.
+- The WebSocket upgrade at `/api/live` is gated by the same session check as the API, and is handled before Hono so a 101 response is never handed to middleware that wants to set headers on it.
 - The `*.workers.dev` hostname is off by default, so the app is reachable only on your own domain. See [Putting Cloudflare Access in front](#putting-cloudflare-access-in-front).
 - Received HTML is sanitised client-side (scripts, handlers, styles, unknown URL schemes removed) and links are forced to `target="_blank" rel="noopener"`.
 - Stored attachments are served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`.

@@ -33,6 +33,8 @@ just up
 
 ![Command palette](docs/screenshots/command-palette.png)
 
+**Mail arrives, not eventually.** New messages appear the moment they land — no refresh, no waiting for a timer. A Durable Object holds a socket open to the tab and rings it when something arrives, and the tab title carries the unread count and your domain, so `(3) yourdomain.com · Postbox` in a background tab is enough to tell you. Desktop notifications and a chime are a switch away in Settings → Alerts. If the socket ever drops, the app quietly falls back to checking every fifteen seconds until it comes back.
+
 **Writing is quick and forgiving.** Markdown in, properly formatted mail out. Recipients autocomplete from people you actually correspond with, because the address book builds itself from your mail. Drafts save as you type. Undo send gives you eight seconds to change your mind, and if you close the tab in that window the message still goes, rather than vanishing.
 
 ![Composer](docs/screenshots/composer-dark.png)
@@ -98,8 +100,11 @@ Nothing. To be specific about it:
 | Sending | 100/day, 3,000/month | Personal and small-team use |
 | Storage | 5 GB | Roughly 100,000 messages |
 | Requests | 100,000/day | You, refreshing a lot |
+| Real-time | 100,000 Durable Object requests/day | A tab open all day costs a few hundred |
 
 No credit card, no paid Workers plan, no trial that expires. If you outgrow the sending limit, Resend's next tier is $20/month, or you can move to Cloudflare's own sending by swapping one file.
+
+The live channel is free for a specific reason worth knowing: the Durable Object holding your socket open uses [hibernation](https://developers.cloudflare.com/durable-objects/best-practices/websockets/), so it is evicted from memory while the connection stays up and bills no duration at all. Keeping a socket awake the ordinary way would cost roughly 11,000 of the free plan's 13,000 GB-s per day for a single open tab — which is also why this is a WebSocket and not server-sent events, since SSE has no hibernation to fall back on.
 
 ## Commands
 
@@ -121,6 +126,8 @@ Set `STAGE=staging` in `.env` and you get a completely separate copy, with its o
 The inbox is behind a single password, because a public URL that can send mail from your domain is a spam relay waiting to happen. The app is served only on your own hostname; the `*.workers.dev` address is switched off, so there's one door rather than two.
 
 If you already run Cloudflare Zero Trust, you can put Access in front of `mail.yourdomain.com` for proper SSO. Postbox doesn't set that up for you, because Cloudflare's onboarding asks for a payment method even on the free Zero Trust tier, and this project promises you'll never be asked for a card. [The architecture notes](docs/ARCHITECTURE.md#putting-cloudflare-access-in-front) explain how to wire it up if you want it.
+
+**Settings → Access** records every sign-in, every refused password and every change made through the app, with the address, country and device behind it, kept for 90 days. With one shared password the useful question is not *who* but *which sign-in*, so each row is tagged with the session it belongs to — a wrong password from an address that isn't yours is the row you are looking for. Reading mail is not recorded, and no message content is stored there.
 
 Your mail lives in your own Cloudflare D1 database. Nobody else can read it, there's no analytics, and there's nothing to export because it was never anywhere else.
 
