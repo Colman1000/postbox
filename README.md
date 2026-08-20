@@ -1,0 +1,123 @@
+<div align="center">
+
+# Postbox
+
+**A real inbox for your own domain. Runs on Cloudflare's free tier. Costs nothing, forever.**
+
+[Setup](#setup) · [What it costs](#what-it-costs) · [Commands](#commands) · [Architecture](docs/ARCHITECTURE.md)
+
+</div>
+
+![Postbox inbox](docs/screenshots/inbox-dark.png)
+
+## The gap this fills
+
+You bought a domain. You'd like `you@yourdomain.com`. Your options are Google Workspace at $7 a user per month, Fastmail at $5, or Zoho's free tier with its own asterisks.
+
+Meanwhile Cloudflare will happily receive mail for your domain, unlimited, free, forever. The catch is that Email Routing only *forwards*. Everything lands in your personal Gmail, tangled up with newsletters and delivery notifications, and you can't reply as your domain without more setup.
+
+Postbox is the other half. It takes the mail Cloudflare is already receiving for you and gives it somewhere to live: a fast, keyboard-driven client that you own, deployed to your own account, with your mail in your own database.
+
+One command, and `anything@yourdomain.com` works.
+
+```bash
+cp .env.example .env    # three values
+just up
+```
+
+## What it's like to use
+
+**Every address works immediately.** There are no aliases to create. `hi@`, `billing@`, `press@`, and the typo somebody made last Tuesday all land in the same inbox, and you can send as any of them. That's a catch-all rule doing the work, and it's free.
+
+**It's built for the keyboard.** `c` to write, `e` to archive, `j`/`k` to move, `g i` for the inbox, `⌘K` for everything else. The palette doubles as search, so finding a two-year-old thread is one keystroke and three letters.
+
+![Command palette](docs/screenshots/command-palette.png)
+
+**Writing is quick and forgiving.** Markdown in, properly formatted mail out. Recipients autocomplete from people you actually correspond with, because the address book builds itself from your mail. Drafts save as you type. Undo send gives you eight seconds to change your mind, and if you close the tab in that window the message still goes, rather than vanishing.
+
+![Composer](docs/screenshots/composer-dark.png)
+
+**Tracking pixels don't get a free pass.** Remote images are held back until you ask for them, and each message shows exactly how many were blocked. Every message also carries its SPF, DKIM and DMARC result, so "is this really my bank" has an answer instead of a vibe.
+
+![Reading a message](docs/screenshots/reading-light.png)
+
+**It's a real phone app, not a squeezed desktop.** One pane at a time, navigation in a drawer, compose takes the full screen, and you can swipe a conversation away.
+
+<p align="center">
+  <img src="docs/screenshots/mobile-inbox.png" width="270" alt="Inbox on mobile">
+  <img src="docs/screenshots/mobile-thread.png" width="270" alt="Reading a thread on mobile">
+  <img src="docs/screenshots/mobile-drawer.png" width="270" alt="Navigation drawer on mobile">
+</p>
+
+There's also send later, snooze, labels, templates, per-address signatures, starring, full-text search, attachments, light and dark, and a running count of how many sends you have left today.
+
+## Setup
+
+You'll need a domain already on Cloudflare, [`just`](https://github.com/casey/just), and Node 20+ (or Bun).
+
+Copy `.env.example` to `.env` and fill in three values:
+
+| | |
+|---|---|
+| `DOMAIN` | The domain you want mail on. |
+| `CLOUDFLARE_API_TOKEN` | From your Cloudflare dashboard. Or run `just login` instead. |
+| `RESEND_API_KEY` | A free **Full access** key from [resend.com](https://resend.com/api-keys). Used once, at setup. |
+
+Then:
+
+```bash
+just doctor   # optional, checks all three before you commit to anything
+just up
+```
+
+That's the whole setup. Everything else is worked out for you: your account ID, your zone, the hostname (`mail.yourdomain.com`), the database, the sending domain and its DNS records, a scoped API key, a session secret, and a strong password for the UI, which is printed once when it's created.
+
+![Sign in](docs/screenshots/signin-dark.png)
+
+When you're done, `just down` removes every single thing it made.
+
+### Why Resend is in here
+
+Cloudflare receives mail for free but charges for sending: outbound needs the paid Workers plan. Since the point of this project is a mailbox that costs nothing, sending goes through Resend's free tier instead, and Postbox wires the whole thing up for you. It registers the domain, writes the DNS records into Cloudflare, and mints a send-only key scoped to your domain so your full-access key never leaves your laptop.
+
+## What it costs
+
+Nothing. To be specific about it:
+
+| | Free allowance | Enough for |
+|---|---|---|
+| Receiving | Unlimited | Everything |
+| Sending | 100/day, 3,000/month | Personal and small-team use |
+| Storage | 5 GB | Roughly 100,000 messages |
+| Requests | 100,000/day | You, refreshing a lot |
+
+No credit card, no paid Workers plan, no trial that expires. If you outgrow the sending limit, Resend's next tier is $20/month, or you can move to Cloudflare's own sending by swapping one file.
+
+## Commands
+
+| | |
+|---|---|
+| `just up` | Deploy. Safe to run again. |
+| `just down` | Remove everything, including the Resend key. |
+| `just dev` | Run it locally. |
+| `just doctor` | Check your setup before deploying. |
+| `just verify` | Nudge Resend to re-check DNS. |
+| `just secrets` | Where your password and keys live. |
+| `just logs` | Tail the live logs. |
+| `just sql "..."` | Query your mail directly. |
+
+Set `STAGE=staging` in `.env` and you get a completely separate copy, with its own database and hostname, on the same domain.
+
+## Good to know
+
+The inbox is behind a single password, because a public URL that can send mail from your domain is a spam relay waiting to happen. If you'd rather use SSO, put Cloudflare Access in front of the hostname.
+
+Your mail lives in your own Cloudflare D1 database. Nobody else can read it, there's no analytics, and there's nothing to export because it was never anywhere else.
+
+Postbox is for personal and small-team mail. It is not a marketing platform, and Resend's free tier will (correctly) stop you using it as one.
+
+More on how it fits together, including the data model and the deployment story, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## License
+
+MIT. Use it, fork it, run it for your whole family, sell the T-shirts.

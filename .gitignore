@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+.vite/
+
+# alchemy state + local runtime
+.alchemy/
+.wrangler/
+
+# generated + machine-local secrets (never commit)
+.secrets/
+.env
+.env.*
+!.env.example
+
+# generated during deploy
+.postbox/
+
+# os / editor
+.DS_Store
+*.log
+
+# local smoke/testing scratch
+wrangler.smoke.jsonc
+.idea/
+node_modules/.tmp/
+wrangler.shots.jsonc

@@ -1,0 +1,368 @@
+@import "tailwindcss";
+/* enter/exit keyframe utilities Radix state attributes hook into */
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Monochrome by construction.
+ *
+ * Every colour below has zero chroma in OKLCH, so the entire interface is
+ * built from one perceptually-even grey ramp. That is a constraint, not a
+ * palette: with no hue to lean on, hierarchy has to come from weight, spacing
+ * and contrast — which is what keeps a dense mail client readable.
+ */
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+
+  --destructive: oklch(0.32 0 0);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* App surfaces: the rails either side of the reading pane sit back a step. */
+  --rail: oklch(0.985 0 0);
+  --rail-foreground: oklch(0.145 0 0);
+  --overlay: oklch(0.145 0 0 / 0.5);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+
+  --card: oklch(0.185 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.19 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+
+  --secondary: oklch(0.24 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.24 0 0);
+  --muted-foreground: oklch(0.68 0 0);
+
+  --accent: oklch(0.26 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.85 0 0);
+  --destructive-foreground: oklch(0.16 0 0);
+
+  --border: oklch(0.99 0 0 / 12%);
+  --input: oklch(0.99 0 0 / 16%);
+  --ring: oklch(0.55 0 0);
+
+  --rail: oklch(0.125 0 0);
+  --rail-foreground: oklch(0.985 0 0);
+  --overlay: oklch(0 0 0 / 0.65);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-rail: var(--rail);
+  --color-rail-foreground: var(--rail-foreground);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas,
+    monospace;
+
+  --animate-in-fast: enter 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  /* Focus is always visible, never a mystery — this app is keyboard-first. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  /*
+   * iOS zooms the viewport when a focused input's font-size is under 16px.
+   * The design uses 13px, so the size is restored only where it would trigger
+   * that — coarse pointers on small screens.
+   */
+  @media (pointer: coarse) and (max-width: 767px) {
+    input,
+    textarea,
+    select {
+      font-size: 16px;
+    }
+  }
+
+  ::selection {
+    background: var(--color-foreground);
+    color: var(--color-background);
+  }
+
+  /* Thin, self-effacing scrollbars. Dense lists, no chrome. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--color-foreground) 20%, transparent)
+      transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--color-foreground) 16%, transparent);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--color-foreground) 30%, transparent);
+    background-clip: content-box;
+  }
+}
+
+@layer components {
+  /*
+   * Received HTML, tamed.
+   *
+   * Marketing email arrives with fixed widths, its own fonts and hard-coded
+   * near-black text that vanishes on a dark background. These rules force it
+   * back into the reading column without stripping the sender's layout.
+   */
+  .mail-body {
+    font-size: 0.9375rem;
+    line-height: 1.65;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  .mail-body :where(p, ul, ol, blockquote, pre, table) {
+    margin-block: 0.75em;
+  }
+  .mail-body :where(h1, h2, h3, h4) {
+    font-weight: 600;
+    line-height: 1.3;
+    margin-block: 1.2em 0.5em;
+  }
+  .mail-body :where(h1) { font-size: 1.35rem; }
+  .mail-body :where(h2) { font-size: 1.15rem; }
+  .mail-body :where(h3) { font-size: 1rem; }
+  .mail-body :where(a) {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    text-decoration-color: color-mix(in oklch, currentColor 40%, transparent);
+  }
+  .mail-body :where(img) {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+  }
+  .mail-body :where(table) {
+    max-width: 100%;
+    display: block;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+  .mail-body :where(td, th) {
+    padding: 0.4em 0.6em;
+  }
+  .mail-body :where(blockquote) {
+    border-left: 2px solid var(--color-border);
+    padding-left: 1em;
+    color: var(--color-muted-foreground);
+  }
+  .mail-body :where(pre) {
+    background: var(--color-muted);
+    padding: 0.85em 1em;
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+  }
+  .mail-body :where(code) {
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+  /* A remote image we chose not to load. Reads as a deliberate placeholder,
+     never as a failed request. */
+  .mail-body .blocked-image {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5em;
+    min-height: 2.25rem;
+    padding: 0.5em 0.85em;
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-muted);
+    color: var(--color-muted-foreground);
+    font-size: 0.8125rem;
+  }
+  .mail-body .blocked-image::before {
+    content: "";
+    width: 0.9em;
+    height: 0.9em;
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+    opacity: 0.7;
+  }
+
+  /* Plain-text bodies: keep the author's line breaks, but read as prose. */
+  .mail-body .mail-plain {
+    white-space: pre-wrap;
+    font-family: inherit;
+  }
+  /* Quoted history dims back so the new text leads. */
+  .mail-body .mail-plain :where(.quote) {
+    color: var(--color-muted-foreground);
+  }
+
+  .mail-body :where(hr) {
+    border: 0;
+    border-top: 1px solid var(--color-border);
+    margin-block: 1.5em;
+  }
+  /* Senders love #000 on #fff. In dark mode both become unreadable. */
+  .dark .mail-body :where([style*="color"]) {
+    color: inherit !important;
+  }
+  .dark .mail-body :where([bgcolor], [style*="background"]) {
+    background-color: transparent !important;
+  }
+}
+
+@layer utilities {
+  /*
+   * Safe areas.
+   *
+   * On a notched phone the status bar and the home indicator overlap the
+   * viewport, so any bar pinned to an edge needs the inset added to its
+   * padding rather than its height — otherwise the content shifts but the
+   * touch target does not.
+   */
+  .pt-safe {
+    padding-top: max(env(safe-area-inset-top), 0px);
+  }
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  .pl-safe {
+    padding-left: max(env(safe-area-inset-left), 0px);
+  }
+  .inset-b-safe {
+    bottom: calc(1rem + max(env(safe-area-inset-bottom), 0px));
+  }
+
+  /* Momentum scrolling that does not drag the page behind it. */
+  .scroll-panel {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Coarse pointers get bigger targets.
+ *
+ * The desktop layout is deliberately dense; on a phone that same density is
+ * unusable, so every icon button grows to the 44px Apple/Android minimum
+ * without changing the icon itself.
+ */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  a[href] {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  [data-slot="button"][class*="size-7"],
+  [data-slot="button"][class*="size-8"] {
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
