@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { marked } from "marked";
 import {
   ChevronDownIcon,
   ClockIcon,
@@ -12,16 +11,20 @@ import {
   PaperclipIcon,
   PencilIcon,
   SendIcon,
+  SquareCodeIcon,
   Trash2Icon,
+  TypeIcon,
   XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Address, AttachmentMeta, SessionInfo } from "@shared/types.ts";
 import { api, ApiError } from "@/lib/api.ts";
 import { fileSize } from "@/lib/format.ts";
+import { markdownToHtml } from "@/lib/markdown.ts";
 import { refreshAfterSend, useIdentities, useTemplates } from "@/lib/queries.ts";
 import { cn } from "@/lib/utils.ts";
 import { RecipientInput } from "./recipient-input.tsx";
+import { RichTextEditor } from "./rich-text-editor.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
@@ -45,6 +48,19 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 /** How long "Sending…" stays undoable before the request actually goes out. */
 const UNDO_WINDOW_MS = 8000;
+
+/**
+ * How the body is being edited.
+ *
+ * `rich` is the default and what almost everyone will ever see: buttons for
+ * bold, lists and links. `markdown` is the same document with the formatting
+ * written out in full — the fallback for people who prefer it, and the escape
+ * hatch when the visual editor gets something wrong. `preview` is neither, and
+ * shows the message as the recipient will receive it.
+ */
+type View = "rich" | "markdown" | "preview";
+
+const VIEW_KEY = "postbox:composer-view";
 
 export interface ComposeSeed {
   mode: "new" | "reply" | "reply-all" | "forward" | "edit";
@@ -84,7 +100,9 @@ export function Composer({
 
   const [showCc, setShowCc] = useState((seed.cc?.length ?? 0) > 0 || (seed.bcc?.length ?? 0) > 0);
   const [fullscreen, setFullscreen] = useState(false);
-  const [preview, setPreview] = useState(false);
+  const [view, setView] = useState<View>(() =>
+    localStorage.getItem(VIEW_KEY) === "markdown" ? "markdown" : "rich",
+  );
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<number | null>(null);
@@ -92,11 +110,19 @@ export function Composer({
 
   const draftId = useRef<string | undefined>(seed.id);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  /** Where the eye button goes back to, and the choice that is remembered. */
+  const editView = useRef<Exclude<View, "preview">>(view === "markdown" ? "markdown" : "rich");
   const fileRef = useRef<HTMLInputElement>(null);
   const dirty = useRef(false);
 
   const recipientCount = to.length + cc.length + bcc.length;
   const canSend = recipientCount > 0 && !busy;
+
+  useEffect(() => {
+    if (view === "preview") return;
+    editView.current = view;
+    localStorage.setItem(VIEW_KEY, view);
+  }, [view]);
 
   // ── autosave ──────────────────────────────────────────────────────────────
 
@@ -274,6 +300,10 @@ export function Composer({
         if (event.shiftKey) document.getElementById("postbox-schedule")?.click();
         else void send();
       }
+      if (mod && event.shiftKey && event.key.toLowerCase() === "m") {
+        event.preventDefault();
+        setView((current) => (current === "markdown" ? "rich" : "markdown"));
+      }
       if (event.key === "Escape" && !fullscreen) {
         const target = event.target as HTMLElement | null;
         if (target?.closest("[data-radix-popper-content-wrapper]")) return;
@@ -285,9 +315,11 @@ export function Composer({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [send, persist, onClose, fullscreen]);
 
+  // Rendered with the same Markdown settings the Worker sends with, so the
+  // preview is a preview rather than an approximation.
   const previewHtml = useMemo(
-    () => (preview ? (marked.parse(body, { async: false }) as string) : ""),
-    [preview, body],
+    () => (view === "preview" ? markdownToHtml(body) : ""),
+    [view, body],
   );
 
   return (
@@ -407,20 +439,48 @@ export function Composer({
       </div>
 
       {/* Body */}
-      <div className="relative min-h-0 flex-1">
-        {preview ? (
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {view === "preview" && (
           <div
             className="mail-body scroll-panel h-full overflow-y-auto px-4 py-3"
             dangerouslySetInnerHTML={{ __html: previewHtml }}
           />
-        ) : (
-          <Textarea
-            ref={bodyRef}
+        )}
+
+        {view === "rich" && (
+          <RichTextEditor
             value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Write your message. Markdown works — **bold**, [links](https://…), lists."
-            className="h-full resize-none rounded-none border-0 px-4 py-3 text-[13px] leading-relaxed shadow-none focus-visible:ring-0"
+            onChange={setBody}
+            placeholder="Write your message…"
+            autoFocus={seed.mode !== "new" && seed.mode !== "forward"}
+            onSwitchToMarkdown={() => setView("markdown")}
           />
+        )}
+
+        {view === "markdown" && (
+          <>
+            <div className="text-muted-foreground flex h-9 shrink-0 items-center gap-2 border-b px-3 text-[11px]">
+              <SquareCodeIcon className="size-3.5 shrink-0" />
+              <span className="truncate">Markdown source</span>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground ml-auto shrink-0 gap-1"
+                onClick={() => setView("rich")}
+              >
+                <TypeIcon /> Rich text
+                <Kbd className="ml-1">⌘⇧M</Kbd>
+              </Button>
+            </div>
+            <Textarea
+              ref={bodyRef}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              autoFocus={seed.mode !== "new" && seed.mode !== "forward"}
+              placeholder="Write your message. Markdown works — **bold**, [links](https://…), lists."
+              className="min-h-0 flex-1 resize-none rounded-none border-0 px-4 py-3 font-mono text-[12px] leading-relaxed shadow-none focus-visible:ring-0"
+            />
+          </>
         )}
 
         {dragging && (
@@ -519,8 +579,13 @@ export function Composer({
           multiple
           hidden
           onChange={(e) => {
-            if (e.target.files) void attach(e.target.files);
+            // Copied out before the input is reset: `e.target.files` is live,
+            // and clearing the value empties the very list `attach` is about
+            // to read once its first `await` resolves. Dropping files worked
+            // and picking them did nothing, for exactly this reason.
+            const picked = Array.from(e.target.files ?? []);
             e.target.value = "";
+            if (picked.length > 0) void attach(picked);
           }}
         />
 
@@ -529,10 +594,10 @@ export function Composer({
         </FooterIcon>
 
         <FooterIcon
-          label={preview ? "Back to editing" : "Preview as the recipient sees it"}
-          onClick={() => setPreview((v) => !v)}
+          label={view === "preview" ? "Back to editing" : "Preview as the recipient sees it"}
+          onClick={() => setView(view === "preview" ? editView.current : "preview")}
         >
-          {preview ? <PencilIcon /> : <EyeIcon />}
+          {view === "preview" ? <PencilIcon /> : <EyeIcon />}
         </FooterIcon>
 
         {(templates.data?.length ?? 0) > 0 && (

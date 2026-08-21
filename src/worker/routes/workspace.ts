@@ -324,13 +324,18 @@ workspace.patch("/settings", async (c) => {
 workspace.get("/stats", async (c) => {
   const now = Date.now();
 
+  // Counted through the same join the folder listing uses — threads, not bare
+  // messages, and the thread's snooze rather than the message's. A number in
+  // the sidebar that no list can account for is worse than no number at all:
+  // "1 draft" with an empty Drafts folder is unfixable from the UI.
   const { results: folderRows } = await c.env.DB.prepare(
-    `SELECT folder,
-            COUNT(DISTINCT thread_id) AS threads,
-            SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) AS unread
-       FROM messages
-      WHERE (snoozed_until IS NULL OR snoozed_until <= ?)
-      GROUP BY folder`,
+    `SELECT m.folder AS folder,
+            COUNT(DISTINCT m.thread_id) AS threads,
+            SUM(CASE WHEN m.is_read = 0 AND m.direction = 'inbound' THEN 1 ELSE 0 END) AS unread
+       FROM messages m
+       JOIN threads t ON t.id = m.thread_id
+      WHERE (t.snoozed_until IS NULL OR t.snoozed_until <= ?)
+      GROUP BY m.folder`,
   )
     .bind(now)
     .all<{ folder: string; threads: number; unread: number }>();

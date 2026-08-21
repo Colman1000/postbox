@@ -71,6 +71,28 @@ export async function runScheduledWork(env: Env): Promise<void> {
     changed = true;
   }
 
+  // ── orphans ───────────────────────────────────────────────────────────────
+  // A conversation summary is written after the message it summarises, so a
+  // request that dies in between — closing the tab mid-autosave is enough —
+  // leaves a message that no folder can list and no count can explain.
+  // Rebuilding the summary is idempotent, and puts the message back.
+  const { results: orphans } = await env.DB.prepare(
+    `SELECT DISTINCT m.thread_id AS thread_id
+       FROM messages m
+       LEFT JOIN threads t ON t.id = m.thread_id
+      WHERE t.id IS NULL
+      LIMIT 25`,
+  ).all<{ thread_id: string }>();
+
+  if ((orphans ?? []).length > 0) {
+    const rebuilt = await Promise.all(
+      orphans!.map((row) => recomputeThread(env.DB, row.thread_id)),
+    );
+    const valid = rebuilt.filter((s): s is D1PreparedStatement => s !== null);
+    if (valid.length > 0) await env.DB.batch(valid);
+    changed = true;
+  }
+
   // A conversation that woke up, or a scheduled message that went out, changes
   // what the open tab is looking at just as much as new mail does.
   if (changed) {

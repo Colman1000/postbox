@@ -288,6 +288,63 @@
     border-top: 1px solid var(--color-border);
     margin-block: 1.5em;
   }
+  /*
+   * Lists.
+   *
+   * Tailwind's reset strips the marker off every list, which is right for
+   * navigation and wrong for prose: a bulleted list has to look like one both
+   * when it arrives and while it is being written.
+   */
+  .mail-body :where(ul, ol) {
+    padding-inline-start: 1.5em;
+    list-style: revert;
+  }
+  .mail-body :where(li) {
+    margin-block: 0.2em;
+  }
+  .mail-body :where(li)::marker {
+    color: var(--color-muted-foreground);
+  }
+  /* A checklist item leads with its box, so it needs no bullet as well. */
+  .mail-body :where(li:has(> input[type="checkbox"])) {
+    list-style: none;
+    margin-inline-start: -1.35em;
+  }
+  .mail-body :where(li > input[type="checkbox"]) {
+    margin-inline-end: 0.5em;
+    accent-color: var(--color-foreground);
+  }
+
+  /*
+   * The composer's writing surface.
+   *
+   * It borrows `.mail-body` wholesale, so what you type is laid out exactly as
+   * it will arrive, and adds only what editing needs on top: a placeholder,
+   * and a visible caret in a panel with no visible field.
+   */
+  .rich-editor {
+    position: relative;
+    caret-color: var(--color-foreground);
+  }
+  .rich-editor[data-empty="true"]::before {
+    content: attr(data-placeholder);
+    position: absolute;
+    top: 0.75rem;
+    inset-inline-start: 1rem;
+    color: var(--color-muted-foreground);
+    pointer-events: none;
+  }
+  .rich-editor > :where(*):first-child {
+    margin-block-start: 0;
+  }
+  .rich-editor :where(input[type="checkbox"]) {
+    cursor: pointer;
+  }
+  /* A link in a draft is text being written, not a link to follow. */
+  .rich-editor :where(a) {
+    cursor: text;
+  }
+
   /* Senders love #000 on #fff. In dark mode both become unreadable. */
   .dark .mail-body :where([style*="color"]) {
     color: inherit !important;
