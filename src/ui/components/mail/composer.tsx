@@ -124,6 +124,33 @@ export function Composer({
     localStorage.setItem(VIEW_KEY, view);
   }, [view]);
 
+  // ── an existing draft's attachments ───────────────────────────────────────
+
+  /**
+   * Reopening a draft has to bring its attachments with it.
+   *
+   * They are stored against the draft rather than held in the composer, so
+   * they were always sent — but an empty attachment bar says the opposite,
+   * and there was no way to take one off again. Only the files are fetched:
+   * everything else about the draft is already in the seed.
+   */
+  useEffect(() => {
+    const id = seed.id;
+    if (!id) return;
+    let cancelled = false;
+    api
+      .draft(id)
+      .then((message) => {
+        if (!cancelled) setAttachments(message.attachments ?? []);
+      })
+      .catch(() => {
+        // The draft opens either way; the files are still attached to it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [seed.id]);
+
   // ── autosave ──────────────────────────────────────────────────────────────
 
   const payload = useMemo(
