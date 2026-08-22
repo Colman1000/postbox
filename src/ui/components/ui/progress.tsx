@@ -9,6 +9,10 @@ function Progress({
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
   return (
     <ProgressPrimitive.Root
+      // Passed on as well as used below: without it Radix reports the bar as
+      // indeterminate, so the fill moves but a screen reader is told nothing
+      // is known about how far along it is.
+      value={value}
       className={cn("bg-muted relative h-1 w-full overflow-hidden rounded-full", className)}
       {...props}
     >

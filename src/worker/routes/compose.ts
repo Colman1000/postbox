@@ -15,12 +15,10 @@ import {
 } from "../lib/db.ts";
 import { rfcMessageId, ulid } from "../lib/ids.ts";
 import { SendError, renderBody, send } from "../lib/mail/index.ts";
+import { MAX_ATTACHMENT_BYTES } from "../../shared/types.ts";
 import type { App } from "./context.ts";
 
 export const compose = new Hono<App>();
-
-/** Total attachment bytes a single outgoing message may carry. */
-const MAX_OUTBOUND_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 function normalizeRecipients(input: Address[] | string | undefined): Address[] {
   if (!input) return [];
@@ -233,7 +231,7 @@ compose.post("/drafts/:id/attachments", async (c) => {
     .bind(messageId)
     .first<{ total: number }>();
 
-  if ((current?.total ?? 0) + file.size > MAX_OUTBOUND_ATTACHMENT_BYTES) {
+  if ((current?.total ?? 0) + file.size > MAX_ATTACHMENT_BYTES) {
     return c.json(
       {
         error: "Attachments exceed the 8 MB limit for one message.",

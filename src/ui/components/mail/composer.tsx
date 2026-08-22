@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Address, AttachmentMeta, SessionInfo } from "@shared/types.ts";
-import { api, ApiError } from "@/lib/api.ts";
+import { MAX_ATTACHMENT_BYTES } from "@shared/types.ts";
+import { api, ApiError, UploadCancelled } from "@/lib/api.ts";
 import { fileSize } from "@/lib/format.ts";
 import { markdownToHtml } from "@/lib/markdown.ts";
 import { refreshAfterSend, useIdentities, useTemplates } from "@/lib/queries.ts";
@@ -28,6 +29,7 @@ import { RichTextEditor } from "./rich-text-editor.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Kbd } from "@/components/ui/kbd.tsx";
+import { Progress } from "@/components/ui/progress.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 import {
   DropdownMenu,
@@ -59,6 +61,16 @@ const UNDO_WINDOW_MS = 8000;
  * shows the message as the recipient will receive it.
  */
 type View = "rich" | "markdown" | "preview";
+
+/** A file on its way to the draft. */
+interface Upload {
+  id: string;
+  filename: string;
+  size: number;
+  /** 0–1, as reported by the browser. */
+  progress: number;
+  cancel: () => void;
+}
 
 const VIEW_KEY = "postbox:composer-view";
 
@@ -97,6 +109,7 @@ export function Composer({
   const [subject, setSubject] = useState(seed.subject ?? "");
   const [body, setBody] = useState(seed.body ?? "");
   const [attachments, setAttachments] = useState<AttachmentMeta[]>([]);
+  const [uploads, setUploads] = useState<Upload[]>([]);
 
   const [showCc, setShowCc] = useState((seed.cc?.length ?? 0) > 0 || (seed.bcc?.length ?? 0) > 0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -116,7 +129,9 @@ export function Composer({
   const dirty = useRef(false);
 
   const recipientCount = to.length + cc.length + bcc.length;
-  const canSend = recipientCount > 0 && !busy;
+  // Sending mid-upload would send the message without the file, which is the
+  // one outcome nobody wants from having attached it.
+  const canSend = recipientCount > 0 && !busy && uploads.length === 0;
 
   useEffect(() => {
     if (view === "preview") return;
@@ -228,6 +243,12 @@ export function Composer({
         toast.error("Add at least one recipient.");
         return;
       }
+      if (uploads.length > 0) {
+        toast.error("A file is still uploading.", {
+          description: "Sending now would leave it behind.",
+        });
+        return;
+      }
       setBusy(true);
       await persist();
 
@@ -266,7 +287,7 @@ export function Composer({
         },
       });
     },
-    [recipientCount, persist, dispatch, onSent, payload, seed.threadId, client],
+    [recipientCount, uploads.length, persist, dispatch, onSent, payload, seed.threadId, client],
   );
 
   // If the tab goes away mid-undo, flush the send with a beacon rather than
@@ -294,6 +315,9 @@ export function Composer({
 
   const attach = useCallback(
     async (files: FileList | File[]) => {
+      const chosen = Array.from(files);
+      if (chosen.length === 0) return;
+
       dirty.current = true;
       await persist();
       if (!draftId.current) {
@@ -303,18 +327,56 @@ export function Composer({
         draftId.current = result.id;
       }
 
-      for (const file of Array.from(files)) {
+      // Counted here as well as on the server, so a file that could never be
+      // accepted is refused before it is uploaded rather than after.
+      let used = attachments.reduce((total, attachment) => total + attachment.size, 0);
+
+      for (const file of chosen) {
+        if (used + file.size > MAX_ATTACHMENT_BYTES) {
+          toast.error(`${file.name} does not fit.`, {
+            description: `A message can carry ${fileSize(MAX_ATTACHMENT_BYTES)} of attachments in total. Link to the file instead.`,
+          });
+          continue;
+        }
+        used += file.size;
+
+        const id = crypto.randomUUID();
+        const controller = new AbortController();
+        setUploads((current) => [
+          ...current,
+          {
+            id,
+            filename: file.name || "attachment",
+            size: file.size,
+            progress: 0,
+            cancel: () => controller.abort(),
+          },
+        ]);
+
         try {
-          const meta = await api.uploadAttachment(draftId.current!, file);
+          const meta = await api.uploadAttachment(draftId.current!, file, {
+            signal: controller.signal,
+            onProgress: (fraction) =>
+              setUploads((current) =>
+                current.map((upload) =>
+                  upload.id === id ? { ...upload, progress: fraction } : upload,
+                ),
+              ),
+          });
           setAttachments((current) => [...current, { ...meta, isInline: false }]);
         } catch (error) {
+          used -= file.size;
+          // A cancelled upload is a decision, not a failure.
+          if (error instanceof UploadCancelled) continue;
           toast.error(
             error instanceof ApiError ? error.message : `Could not attach ${file.name}`,
           );
+        } finally {
+          setUploads((current) => current.filter((upload) => upload.id !== id));
         }
       }
     },
-    [persist, payload, subject],
+    [persist, payload, subject, attachments],
   );
 
   // ── keyboard ──────────────────────────────────────────────────────────────
@@ -518,7 +580,7 @@ export function Composer({
       </div>
 
       {/* Attachments */}
-      {attachments.length > 0 && (
+      {(attachments.length > 0 || uploads.length > 0) && (
         <div className="flex shrink-0 flex-wrap gap-1.5 border-t px-3 py-2">
           {attachments.map((attachment) => (
             <span
@@ -537,6 +599,38 @@ export function Composer({
                 }}
                 className="text-muted-foreground hover:text-foreground"
                 aria-label={`Remove ${attachment.filename}`}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </span>
+          ))}
+
+          {/* Still arriving. Bytes rather than a percentage: on a slow
+              connection "1.2 MB of 6.4 MB" answers "is it moving?" and "how
+              much longer?" at the same time. */}
+          {uploads.map((upload) => (
+            <span
+              key={upload.id}
+              className="bg-muted flex h-6 items-center gap-1.5 rounded-md pr-1 pl-2 text-[11px]"
+            >
+              <LoaderCircleIcon className="text-muted-foreground size-3 animate-spin" />
+              <span className="max-w-[10rem] truncate">{upload.filename}</span>
+              <span className="text-muted-foreground tabular-nums">
+                {fileSize(Math.round(upload.size * upload.progress))} of {fileSize(upload.size)}
+              </span>
+              <Progress
+                // Rounded, not just for the eye: a fractional value reads as
+                // "indeterminate" to the progress bar, which is what a screen
+                // reader would then announce.
+                value={Math.round(upload.progress * 100)}
+                aria-label={`Uploading ${upload.filename}`}
+                className="h-1 w-12"
+              />
+              <button
+                type="button"
+                onClick={upload.cancel}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label={`Stop uploading ${upload.filename}`}
               >
                 <XIcon className="size-3" />
               </button>

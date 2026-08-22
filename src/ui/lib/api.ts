@@ -35,6 +35,14 @@ export class ApiError extends Error {
   }
 }
 
+/** An upload the writer stopped. Not a failure, and not worth a toast. */
+export class UploadCancelled extends Error {
+  constructor() {
+    super("Upload cancelled");
+    this.name = "UploadCancelled";
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     credentials: "same-origin",
@@ -135,14 +143,66 @@ export const api = {
 
   cancelScheduled: (id: string) => post<{ ok: true }>(`/scheduled/${id}/cancel`),
 
-  uploadAttachment: async (draftId: string, file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return request<{ id: string; filename: string; mimeType: string; size: number }>(
-      `/drafts/${draftId}/attachments`,
-      { method: "POST", body: form },
-    );
-  },
+  /**
+   * An upload you can watch, and stop.
+   *
+   * The one place this file does not use `fetch`: the browser only reports how
+   * far a request body has been sent through `XMLHttpRequest`. On a phone
+   * uploading a few megabytes, a bar that moves is the difference between
+   * "working" and "broken", and an upload you can abandon is the difference
+   * between waiting and starting again.
+   */
+  uploadAttachment: (
+    draftId: string,
+    file: File,
+    options?: { onProgress?: (fraction: number) => void; signal?: AbortSignal },
+  ) =>
+    new Promise<{ id: string; filename: string; mimeType: string; size: number }>(
+      (resolve, reject) => {
+        if (options?.signal?.aborted) {
+          reject(new UploadCancelled());
+          return;
+        }
+
+        const upload = new XMLHttpRequest();
+        upload.open("POST", `/api/drafts/${draftId}/attachments`);
+        upload.withCredentials = true;
+
+        upload.upload.addEventListener("progress", (event) => {
+          if (event.lengthComputable) options?.onProgress?.(event.loaded / event.total);
+        });
+
+        upload.addEventListener("load", () => {
+          let data: Record<string, unknown> | null = null;
+          try {
+            data = upload.responseText ? JSON.parse(upload.responseText) : null;
+          } catch {
+            data = null;
+          }
+          if (upload.status >= 200 && upload.status < 300) {
+            resolve(data as unknown as { id: string; filename: string; mimeType: string; size: number });
+          } else {
+            reject(
+              new ApiError(
+                (data?.error as string) ?? `Upload failed (${upload.status})`,
+                upload.status,
+                data?.hint as string | undefined,
+              ),
+            );
+          }
+        });
+
+        upload.addEventListener("error", () =>
+          reject(new ApiError("The upload did not finish — check your connection.", 0)),
+        );
+        upload.addEventListener("abort", () => reject(new UploadCancelled()));
+        options?.signal?.addEventListener("abort", () => upload.abort());
+
+        const form = new FormData();
+        form.append("file", file);
+        upload.send(form);
+      },
+    ),
 
   removeAttachment: (id: string) =>
     request<{ ok: true }>(`/attachments/${id}`, { method: "DELETE" }),

@@ -251,6 +251,15 @@ export interface Paginated<T> {
   hasMore: boolean;
 }
 
+/**
+ * Total attachment bytes one outgoing message may carry.
+ *
+ * Enforced by the Worker, and checked by the composer before it starts
+ * uploading — finding out that a file is too big only after sending it over a
+ * slow connection is the worst possible time to learn it.
+ */
+export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
 export const FOLDERS: Folder[] = [
   "inbox",
   "sent",
