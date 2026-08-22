@@ -19,13 +19,23 @@ export const workspace = new Hono<App>();
 // ── labels ──────────────────────────────────────────────────────────────────
 
 workspace.get("/labels", async (c) => {
+  // The count is what clicking the label shows: labelled conversations that
+  // still exist somewhere other than Trash, and are not snoozed. Counting rows
+  // in `thread_labels` instead would keep counting a conversation long after
+  // it was deleted.
   const { results } = await c.env.DB.prepare(
-    `SELECT l.id, l.name, l.tone, COUNT(tl.thread_id) AS count
+    `SELECT l.id, l.name, l.tone,
+            (SELECT COUNT(DISTINCT t.id)
+               FROM thread_labels tl
+               JOIN threads t ON t.id = tl.thread_id
+               JOIN messages m ON m.thread_id = t.id AND m.folder != 'trash'
+              WHERE tl.label_id = l.id
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?)) AS count
        FROM labels l
-       LEFT JOIN thread_labels tl ON tl.label_id = l.id
-      GROUP BY l.id
       ORDER BY l.name COLLATE NOCASE`,
-  ).all<{ id: string; name: string; tone: string; count: number }>();
+  )
+    .bind(Date.now())
+    .all<{ id: string; name: string; tone: string; count: number }>();
 
   return c.json(
     (results ?? []).map((row) => ({
@@ -324,14 +334,17 @@ workspace.patch("/settings", async (c) => {
 workspace.get("/stats", async (c) => {
   const now = Date.now();
 
-  // Counted through the same join the folder listing uses — threads, not bare
-  // messages, and the thread's snooze rather than the message's. A number in
-  // the sidebar that no list can account for is worse than no number at all:
-  // "1 draft" with an empty Drafts folder is unfixable from the UI.
+  // Every number here counts exactly the rows its own click would list:
+  // conversations rather than messages, through the same join and the same
+  // snooze rule as `/threads`. A badge that no list can account for is worse
+  // than no badge at all — "1 draft" over an empty Drafts folder cannot even
+  // be cleared from the UI.
   const { results: folderRows } = await c.env.DB.prepare(
     `SELECT m.folder AS folder,
             COUNT(DISTINCT m.thread_id) AS threads,
-            SUM(CASE WHEN m.is_read = 0 AND m.direction = 'inbound' THEN 1 ELSE 0 END) AS unread
+            COUNT(DISTINCT CASE
+                    WHEN m.is_read = 0 AND m.direction = 'inbound' THEN m.thread_id
+                  END) AS unread
        FROM messages m
        JOIN threads t ON t.id = m.thread_id
       WHERE (t.snoozed_until IS NULL OR t.snoozed_until <= ?)
@@ -347,9 +360,17 @@ workspace.get("/stats", async (c) => {
     unread[row.folder as Folder] = row.unread ?? 0;
   }
 
+  // Starred spans folders and leaves out Trash, exactly as its listing does —
+  // a starred conversation that was deleted is not one the badge should count.
   const starred = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM threads WHERE is_starred = 1",
-  ).first<{ n: number }>();
+    `SELECT COUNT(DISTINCT t.id) AS n
+       FROM threads t
+       JOIN messages m ON m.thread_id = t.id AND m.folder != 'trash'
+      WHERE t.is_starred = 1
+        AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?)`,
+  )
+    .bind(now)
+    .first<{ n: number }>();
 
   const storage = await c.env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM messages) AS messages,

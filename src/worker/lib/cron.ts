@@ -71,12 +71,19 @@ export async function runScheduledWork(env: Env): Promise<void> {
     changed = true;
   }
 
-  // ── orphans ───────────────────────────────────────────────────────────────
-  // A conversation summary is written after the message it summarises, so a
-  // request that dies in between — closing the tab mid-autosave is enough —
-  // leaves a message that no folder can list and no count can explain.
-  // Rebuilding the summary is idempotent, and puts the message back.
-  const { results: orphans } = await env.DB.prepare(
+  // ── reconciliation ────────────────────────────────────────────────────────
+  //
+  // A conversation summary is written after the messages it summarises, in a
+  // second step, so anything that cuts a request short in between leaves the
+  // two disagreeing: a message no folder can list because its conversation was
+  // never created, or a conversation claiming one message and nothing unread
+  // while a reply sits unread inside it.
+  //
+  // The messages are the truth and the summary is derived, so this finds every
+  // conversation where the two have drifted and rebuilds it. Both queries are
+  // usually empty, and both are bounded — a mailbox that somehow accumulated
+  // hundreds of them is repaired over several minutes rather than in one tick.
+  const { results: drifted } = await env.DB.prepare(
     `SELECT DISTINCT m.thread_id AS thread_id
        FROM messages m
        LEFT JOIN threads t ON t.id = m.thread_id
@@ -84,10 +91,27 @@ export async function runScheduledWork(env: Env): Promise<void> {
       LIMIT 25`,
   ).all<{ thread_id: string }>();
 
-  if ((orphans ?? []).length > 0) {
-    const rebuilt = await Promise.all(
-      orphans!.map((row) => recomputeThread(env.DB, row.thread_id)),
-    );
+  const { results: stale } = await env.DB.prepare(
+    `SELECT t.id AS thread_id
+       FROM threads t
+       LEFT JOIN (
+         SELECT thread_id,
+                COUNT(*) AS messages,
+                SUM(CASE WHEN is_read = 0 AND direction = 'inbound' THEN 1 ELSE 0 END) AS unread
+           FROM messages
+          GROUP BY thread_id
+       ) m ON m.thread_id = t.id
+      WHERE COALESCE(m.messages, 0) <> t.message_count
+         OR COALESCE(m.unread, 0) <> t.unread_count
+      LIMIT 25`,
+  ).all<{ thread_id: string }>();
+
+  const needsRebuild = [
+    ...new Set([...(drifted ?? []), ...(stale ?? [])].map((row) => row.thread_id)),
+  ];
+
+  if (needsRebuild.length > 0) {
+    const rebuilt = await Promise.all(needsRebuild.map((id) => recomputeThread(env.DB, id)));
     const valid = rebuilt.filter((s): s is D1PreparedStatement => s !== null);
     if (valid.length > 0) await env.DB.batch(valid);
     changed = true;

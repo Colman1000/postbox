@@ -57,7 +57,21 @@ mail.get("/threads", async (c) => {
   const where: string[] = [];
   const binds: unknown[] = [];
 
-  let from = `
+  // Starred and labels are filters rather than folders: a conversation keeps
+  // its star and its labels wherever it is filed, so both span the mailbox and
+  // leave out only Trash. Everything else is one folder at a time.
+  const spansFolders = starredOnly || Boolean(labelId);
+
+  let from = spansFolders
+    ? `
+    FROM threads t
+    JOIN (
+      SELECT thread_id, snippet, created_at,
+             ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC) AS rn
+        FROM messages
+       WHERE folder != 'trash'
+    ) m ON m.thread_id = t.id AND m.rn = 1`
+    : `
     FROM threads t
     JOIN (
       SELECT thread_id,
@@ -67,21 +81,9 @@ mail.get("/threads", async (c) => {
         FROM messages
        WHERE folder = ?
     ) m ON m.thread_id = t.id AND m.rn = 1`;
-  binds.push(folder);
+  if (!spansFolders) binds.push(folder);
 
-  if (starredOnly) {
-    // "Starred" spans folders, so it drops the folder join entirely.
-    from = `
-      FROM threads t
-      JOIN (
-        SELECT thread_id, snippet, created_at,
-               ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY created_at DESC) AS rn
-          FROM messages
-         WHERE folder != 'trash'
-      ) m ON m.thread_id = t.id AND m.rn = 1`;
-    binds.length = 0;
-    where.push("t.is_starred = 1");
-  }
+  if (starredOnly) where.push("t.is_starred = 1");
 
   if (labelId) {
     from += "\n    JOIN thread_labels tl ON tl.thread_id = t.id AND tl.label_id = ?";
@@ -97,9 +99,22 @@ mail.get("/threads", async (c) => {
     binds.push(Number(cursor));
   }
 
+  // Counted here rather than read off the conversation row.
+  //
+  // `threads.message_count` and `threads.unread_count` are a summary written
+  // after the fact, and a summary can be missed — an inbound message whose
+  // request was cut short leaves a conversation that says it holds one message
+  // and nothing unread while the sidebar, counting messages, says otherwise.
+  // Deriving both from `messages` is what makes the row, the badge and the
+  // database agree by construction. It is two indexed lookups per listed row,
+  // over a page of fifty.
   const sql = `
     SELECT t.id, t.subject, m.snippet AS snippet, t.participants, t.folder,
-           t.message_count, t.unread_count, t.has_attachments, t.is_starred,
+           (SELECT COUNT(*) FROM messages c WHERE c.thread_id = t.id) AS message_count,
+           (SELECT COUNT(*) FROM messages c
+             WHERE c.thread_id = t.id AND c.is_read = 0 AND c.direction = 'inbound'
+           ) AS unread_count,
+           t.has_attachments, t.is_starred,
            m.created_at AS last_message_at, t.snoozed_until, t.created_at, t.updated_at
     ${from}
     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -303,6 +318,10 @@ mail.get("/threads/:id", async (c) => {
   const labels = await labelsForThreads(c.env.DB, [threadId]);
   const detail: ThreadDetail = {
     ...rowToThread(thread, labels.get(threadId) ?? []),
+    // The messages are right here, so the counts come from them rather than
+    // from the summary on the conversation row — same reason as the listing.
+    messageCount: messages.length,
+    unreadCount: messages.filter((row) => row.is_read === 0 && row.direction === "inbound").length,
     messages: messages.map((row) => rowToMessage(row, attachmentsByMessage.get(row.id) ?? [])),
   };
   return c.json(detail);
