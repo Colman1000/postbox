@@ -389,6 +389,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
               setCompose(null);
               if (threadId) setSelectedId(threadId);
             }}
+            onOpenSettings={() => setShowSettings(true)}
           />
         )}
 

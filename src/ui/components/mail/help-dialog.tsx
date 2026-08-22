@@ -40,14 +40,27 @@ export function HelpDialog({
         </DialogHeader>
 
         <div className="scroll-panel -mx-1 max-h-[60vh] overflow-y-auto px-1">
-          <Topic title="Your mail" gist="Every address at your domain, one inbox" open>
-            <Point term="No aliases to set up">
-              Anything sent to your domain lands here — <code>hi@</code>, <code>billing@</code>,
-              the typo somebody made last Tuesday — and you can send from any of those addresses.
+          <Topic title="Your mail" gist="Everything arrives; sending takes one step" open>
+            <Point term="Receiving needs nothing">
+              Mail to any address at your domain lands in this one inbox — <code>hi@</code>,{" "}
+              <code>billing@</code>, the typo somebody made last Tuesday. There are no aliases to
+              create and no rules to write.
+            </Point>
+            <Point term="Sending is a short list">
+              The From menu offers the addresses you have added under Settings → Addresses,
+              starting with the one from setup. Adding another takes a moment and changes nothing
+              at the DNS or provider level — but until you add it, an address you already receive
+              mail at is not one you can send from.
+            </Point>
+            <Point term="Replies use your default address">
+              A reply goes out from your default address rather than the address it was sent to.
+              If mail to <code>billing@</code> should be answered as <code>billing@</code>, add
+              that address and pick it in From.
             </Point>
             <Point term="It arrives on its own">
-              New mail shows up without a refresh, and the tab title carries the unread count while
-              you are somewhere else.
+              New mail appears without a refresh, and the tab title carries the unread count while
+              you are elsewhere. If you gave a forwarding address during setup, a copy of
+              everything still goes there too.
             </Point>
           </Topic>
 
@@ -62,8 +75,9 @@ export function HelpDialog({
               toolbar for it and back.
             </Point>
             <Point term="Attach files">
-              The paperclip, or drop them onto the composer — 8 MB in one message. Large ones show
-              their progress and can be stopped part-way.
+              The paperclip, or drop them onto the composer. The 8 MB ceiling covers the whole
+              message rather than each file, and large ones show their progress and can be stopped
+              part-way.
             </Point>
             <Point term="Change your mind">
               Drafts save as you type. After you send there are eight seconds to take it back, and
@@ -72,21 +86,27 @@ export function HelpDialog({
             </Point>
           </Topic>
 
-          <Topic title="Reading" gist="Blocked images, and who really sent it">
+          <Topic title="Reading" gist="Blocked images, sender checks, large attachments">
             <Point term="Images wait to be asked">
-              Remote images stay blocked until you want them, and each message says how many it
-              held back — in most mail those are tracking pixels rather than pictures.
+              Remote images stay blocked until you ask for them, one message at a time — showing
+              them once does not trust that sender in future — and each message says how many it
+              held back.
             </Point>
             <Point term="Sender checks, in plain sight">
               Every message carries what SPF, DKIM and DMARC made of it, which is as close as mail
               gets to answering "is this really from my bank".
             </Point>
+            <Point term="Very large attachments">
+              An attachment past a few megabytes is listed by name and size but its contents are
+              not kept; opening it says so plainly. The message itself always survives.
+            </Point>
           </Topic>
 
           <Topic title="Tidying up" gist="Archive, trash, snooze, stars and labels">
             <Point term="Archive or trash">
-              Archived mail stays searchable, it is just out of the way. Trash keeps things until
-              you empty it, and emptying it is permanent.
+              Archived mail stays searchable, it is just out of the way. Trash holds everything
+              until you clear it yourself — nothing expires on its own, and Delete forever, used
+              inside Trash, is the only step that is permanent.
             </Point>
             <Point term="Snooze">
               Puts a conversation away until a time you pick, and brings it back unread.
@@ -99,7 +119,9 @@ export function HelpDialog({
 
           <Topic title="Finding things" gist="Search, and the command palette">
             <Point term="Search">
-              <Key>/</Key> searches everything you have ever sent or received, drafts included.
+              <Key>/</Key> searches everything you have sent, received or half-written, Spam and
+              Trash included — so something you deleted but never purged still turns up. It answers
+              with the best few dozen matches rather than every one.
             </Point>
             <Point term="The palette">
               <Key>⌘</Key> <Key>K</Key> searches and jumps to any folder at the same time, which is
@@ -107,20 +129,38 @@ export function HelpDialog({
             </Point>
           </Topic>
 
-          <Topic title="Settings" gist="Addresses, signatures, templates, alerts, limits">
+          <Topic title="Settings" gist="Addresses, signatures, templates, alerts">
             <Point term="Make it yours">
-              Name the addresses you send from and give each a signature, keep labels and reusable
-              templates, and turn on desktop notifications and the new-mail chime.
+              Name the addresses you send from and give each a signature, and keep labels and
+              reusable templates.
+            </Point>
+            <Point term="Alerts are per device">
+              Desktop notifications and the new-mail chime need this browser's permission, and
+              turning them on here does not turn them on anywhere else you sign in.
             </Point>
             <Point term="Default mail app">
-              Hand your browser's <code>mailto:</code> links to Postbox, so writing to an address
+              Hand this browser's <code>mailto:</code> links to Postbox, so writing to an address
               anywhere opens the composer here.
             </Point>
-            <Point term="What you have sent">
-              How many messages have gone out today and this month, against what your sending
-              provider allows — plus a log of every sign-in and change on the account.
+          </Topic>
+
+          <Topic title="Worth knowing" gist="Sending limits, and the one password">
+            <Point term="Sending is capped">
+              Your provider's free tier allows so many messages a day and a month; Settings shows
+              where today and this month stand against it. Past the cap a send is refused rather
+              than queued — the message stays in Drafts with the reason on it, and the daily
+              allowance resets at midnight UTC.
+            </Point>
+            <Point term="Sending needs a verified domain">
+              Until your provider has confirmed the DNS records, sends can fail and the app says so
+              instead of pretending. Receiving works either way, from the first minute.
+            </Point>
+            <Point term="One password, one mailbox">
+              There are no separate accounts: anyone with the password sees this mail. Settings →
+              Access lists every sign-in and change, with the address and device behind each one.
             </Point>
           </Topic>
+
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t pt-3">

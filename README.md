@@ -27,7 +27,7 @@ just up
 
 ## What it's like to use
 
-**Every address works immediately.** There are no aliases to create. `hi@`, `billing@`, `press@`, and the typo somebody made last Tuesday all land in the same inbox, and you can send as any of them. That's a catch-all rule doing the work, and it's free.
+**Every address receives immediately.** There are no aliases to create. `hi@`, `billing@`, `press@`, and the typo somebody made last Tuesday all land in the same inbox — a catch-all rule doing the work, for free. Sending as one of them is a separate line in Settings → Addresses: no DNS and no provider setup, but you do add the address before it appears in the composer's From menu.
 
 **It's built for the keyboard.** `c` to write, `e` to archive, `j`/`k` to move, `g i` for the inbox, `⌘K` for everything else, and `?` for the list of all of them — which is also a button in the toolbar, because a shortcut you can only find by already knowing it is folklore rather than a feature. The palette doubles as search, so finding a two-year-old thread is one keystroke and three letters.
 

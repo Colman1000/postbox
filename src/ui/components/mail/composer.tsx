@@ -87,16 +87,21 @@ export interface ComposeSeed {
   threadId?: string;
 }
 
+/** Chosen in the From menu to go and add an address, rather than to send as one. */
+const ADD_ADDRESS = "postbox:add-address";
+
 export function Composer({
   seed,
   session,
   onClose,
   onSent,
+  onOpenSettings,
 }: {
   seed: ComposeSeed;
   session: SessionInfo;
   onClose: () => void;
   onSent: (threadId?: string) => void;
+  onOpenSettings?: () => void;
 }) {
   const client = useQueryClient();
   const identities = useIdentities();
@@ -478,7 +483,16 @@ export function Composer({
       <div className="shrink-0">
         <div className="flex items-center gap-2 border-b px-3 py-1.5">
           <span className="text-muted-foreground w-9 shrink-0 text-[12px]">From</span>
-          <Select value={from} onValueChange={setFrom}>
+          <Select
+            value={from}
+            onValueChange={(value) => {
+              // Mail to every address at the domain already arrives; sending as
+              // one means adding it first. This menu is where that is noticed,
+              // so this is where the way out belongs.
+              if (value === ADD_ADDRESS) onOpenSettings?.();
+              else setFrom(value);
+            }}
+          >
             <SelectTrigger size="sm" className="h-7 border-0 px-1 text-[13px] shadow-none">
               <SelectValue />
             </SelectTrigger>
@@ -488,6 +502,11 @@ export function Composer({
                   {identity.name ? `${identity.name} · ${identity.address}` : identity.address}
                 </SelectItem>
               ))}
+              {onOpenSettings && (
+                <SelectItem value={ADD_ADDRESS} className="text-muted-foreground">
+                  Add an address…
+                </SelectItem>
+              )}
             </SelectContent>
           </Select>
 
