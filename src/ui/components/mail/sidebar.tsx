@@ -13,6 +13,7 @@ import {
   PencilLineIcon,
   PlusIcon,
   SendIcon,
+  CircleQuestionMarkIcon,
   KeyboardIcon,
   SettingsIcon,
   ShieldAlertIcon,
@@ -65,6 +66,7 @@ export function Sidebar({
   onCompose,
   onOpenSettings,
   onShowShortcuts,
+  onShowHelp,
   onToggle,
   variant = "rail",
 }: {
@@ -75,6 +77,7 @@ export function Sidebar({
   onCompose: () => void;
   onOpenSettings: () => void;
   onShowShortcuts: () => void;
+  onShowHelp: () => void;
   onToggle: () => void;
   /**
    * `rail` is the collapsible desktop column; `sheet` is the same navigation
@@ -311,6 +314,9 @@ export function Sidebar({
             </DropdownMenuItem>
 
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={onShowHelp}>
+              <CircleQuestionMarkIcon /> Help
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={onShowShortcuts}>
               <KeyboardIcon /> Keyboard shortcuts
               <Kbd className="ml-auto">?</Kbd>

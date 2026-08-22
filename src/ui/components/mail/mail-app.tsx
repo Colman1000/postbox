@@ -38,6 +38,9 @@ const SettingsDialog = lazyWithReload(() =>
 const ShortcutsDialog = lazyWithReload(() =>
   import("./shortcuts-dialog.tsx").then((m) => ({ default: m.ShortcutsDialog })),
 );
+const HelpDialog = lazyWithReload(() =>
+  import("./help-dialog.tsx").then((m) => ({ default: m.HelpDialog })),
+);
 
 export interface MailView {
   folder: Folder;
@@ -65,6 +68,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
   const [compose, setCompose] = useState<ComposeSeed | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [showPalette, setShowPalette] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [navOpen, setNavOpen] = useState(false);
@@ -292,6 +296,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
         onCompose={() => startCompose()}
         onOpenSettings={() => setShowSettings(true)}
         onShowShortcuts={() => setShowShortcuts(true)}
+        onShowHelp={() => setShowHelp(true)}
         onToggle={() => setSidebarOpen((v) => !v)}
       />
 
@@ -316,6 +321,10 @@ export function MailApp({ session }: { session: SessionInfo }) {
             onShowShortcuts={() => {
               setNavOpen(false);
               setShowShortcuts(true);
+            }}
+            onShowHelp={() => {
+              setNavOpen(false);
+              setShowHelp(true);
             }}
             onToggle={() => {}}
           />
@@ -391,6 +400,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
             onCompose={() => startCompose()}
             onOpenSettings={() => setShowSettings(true)}
             onShowShortcuts={() => setShowShortcuts(true)}
+            onShowHelp={() => setShowHelp(true)}
             onOpenThread={(id) => setSelectedId(id)}
           />
         )}
@@ -404,6 +414,13 @@ export function MailApp({ session }: { session: SessionInfo }) {
           />
         )}
         {showShortcuts && <ShortcutsDialog open onOpenChange={setShowShortcuts} />}
+        {showHelp && (
+          <HelpDialog
+            open
+            onOpenChange={setShowHelp}
+            onShowShortcuts={() => setShowShortcuts(true)}
+          />
+        )}
       </Suspense>
       </ErrorBoundary>
 

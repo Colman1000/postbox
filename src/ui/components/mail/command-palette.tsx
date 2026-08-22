@@ -4,6 +4,7 @@ import {
   ClockIcon,
   FileTextIcon,
   InboxIcon,
+  CircleQuestionMarkIcon,
   KeyboardIcon,
   MailIcon,
   PencilLineIcon,
@@ -40,6 +41,7 @@ export function CommandPalette({
   onCompose,
   onOpenSettings,
   onShowShortcuts,
+  onShowHelp,
   onOpenThread,
 }: {
   open: boolean;
@@ -48,6 +50,7 @@ export function CommandPalette({
   onCompose: () => void;
   onOpenSettings: () => void;
   onShowShortcuts: () => void;
+  onShowHelp: () => void;
   onOpenThread: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -112,6 +115,9 @@ export function CommandPalette({
           </CommandItem>
           <CommandItem onSelect={() => run(onShowShortcuts)}>
             <KeyboardIcon /> Keyboard shortcuts <CommandShortcut>?</CommandShortcut>
+          </CommandItem>
+          <CommandItem onSelect={() => run(onShowHelp)}>
+            <CircleQuestionMarkIcon /> Help
           </CommandItem>
         </CommandGroup>
 
