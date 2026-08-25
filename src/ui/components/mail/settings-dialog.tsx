@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AtSignIcon,
@@ -418,6 +418,9 @@ const THEMES: { value: Theme; label: string; icon: typeof SunIcon }[] = [
   { value: "system", label: "System", icon: MonitorIcon },
 ];
 
+/** How long a colour has to stand before it counts as chosen. */
+const SETTLE_MS = 600;
+
 /** The greyscale the interface is built from, shown as a swatch. */
 const MONOCHROME_SWATCH = "linear-gradient(135deg, oklch(0.97 0 0) 50%, oklch(0.3 0 0) 50%)";
 
@@ -433,15 +436,34 @@ function Appearance() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const { brand, preview, choose } = useBrand();
 
-  // A colour input fires on every pixel of a drag. Paint all of them; save the
-  // one the hand stopped on.
-  const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(pending.current), []);
+  /*
+   * Paint every colour; save the one that is settled on.
+   *
+   * A colour input fires on every pixel of a drag, and trying six swatches to
+   * see which one you like is one decision rather than six — but each save is
+   * a write to the mailbox and a row in the access log, which is a log you
+   * read to spot the unusual. Nothing here is worth burying a sign-in under.
+   */
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const unsaved = useRef<string | null | undefined>(undefined);
 
-  function drag(hex: string) {
+  const commit = useCallback(() => {
+    clearTimeout(timer.current);
+    if (unsaved.current === undefined) return;
+    const value = unsaved.current;
+    unsaved.current = undefined;
+    void choose(value);
+  }, [choose]);
+
+  // Closing the dialog is settling on it too, so a pending pick goes out now
+  // rather than being dropped on the way out.
+  useEffect(() => commit, [commit]);
+
+  function pick(hex: string | null) {
     preview(hex);
-    clearTimeout(pending.current);
-    pending.current = setTimeout(() => choose(hex), 500);
+    unsaved.current = hex;
+    clearTimeout(timer.current);
+    timer.current = setTimeout(commit, SETTLE_MS);
   }
 
   const custom = brand !== null && !BRAND_PRESETS.some((preset) => preset.hex === brand);
@@ -493,7 +515,7 @@ function Appearance() {
             label="Monochrome"
             background={MONOCHROME_SWATCH}
             selected={brand === null}
-            onSelect={() => choose(null)}
+            onSelect={() => pick(null)}
           />
 
           {BRAND_PRESETS.map((preset) => (
@@ -502,7 +524,7 @@ function Appearance() {
               label={preset.name}
               background={preset.hex}
               selected={brand === preset.hex}
-              onSelect={() => choose(preset.hex)}
+              onSelect={() => pick(preset.hex)}
             />
           ))}
 
@@ -526,7 +548,7 @@ function Appearance() {
             <input
               type="color"
               value={brand ?? "#2563eb"}
-              onChange={(event) => drag(event.target.value)}
+              onChange={(event) => pick(event.target.value)}
               aria-label="Custom brand colour"
               className="absolute inset-0 cursor-pointer opacity-0"
             />
@@ -781,7 +803,7 @@ const ACTION_LABEL: Record<string, string> = {
  */
 function Access() {
   const audit = useAudit();
-  const rows = audit.data ?? [];
+  const rows = audit.data?.pages.flatMap((page) => page.items) ?? [];
 
   return (
     <div className="space-y-4">
@@ -793,7 +815,9 @@ function Access() {
 
       {rows.length === 0 ? (
         <p className="text-muted-foreground py-8 text-center text-[12px]">
-          Nothing recorded yet. Your next sign-in will show up here.
+          {audit.isLoading
+            ? "Reading the log…"
+            : "Nothing recorded yet. Your next sign-in will show up here."}
         </p>
       ) : (
         <ul className="space-y-1">
@@ -850,6 +874,62 @@ function Access() {
           })}
         </ul>
       )}
+
+      <LoadMore
+        hasMore={audit.hasNextPage}
+        isLoading={audit.isFetchingNextPage}
+        onLoadMore={() => void audit.fetchNextPage()}
+      />
+    </div>
+  );
+}
+
+/**
+ * The end of a paged list.
+ *
+ * A button rather than a bare sentinel, because it is also where "fetching"
+ * gets said, and because a list that only ever grows when you scroll at it
+ * gives a reader no way to ask. The observer just means they rarely have to.
+ */
+function LoadMore({
+  hasMore,
+  isLoading,
+  onLoadMore,
+}: {
+  hasMore: boolean;
+  isLoading: boolean;
+  onLoadMore: () => void;
+}) {
+  const sentinel = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const node = sentinel.current;
+    if (!node || !hasMore) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !isLoading) onLoadMore();
+      },
+      // No root: the panel scrolls inside the viewport, so clipping by the
+      // panel is already what decides whether this is on screen.
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, isLoading, onLoadMore]);
+
+  if (!hasMore) return null;
+
+  return (
+    <div ref={sentinel} className="flex justify-center pt-1">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="text-muted-foreground"
+        disabled={isLoading}
+        onClick={onLoadMore}
+      >
+        {isLoading ? "Loading…" : "Show older"}
+      </Button>
     </div>
   );
 }
@@ -859,6 +939,7 @@ function Access() {
 function Activity() {
   const events = useEvents();
   const stats = useStats();
+  const rows = events.data?.pages.flatMap((page) => page.items) ?? [];
 
   return (
     <div className="space-y-5">
@@ -877,7 +958,7 @@ function Activity() {
       <Separator />
 
       <ul className="space-y-1">
-        {events.data?.map((event) => (
+        {rows.map((event) => (
           <li key={event.id} className="flex items-baseline gap-3 py-1 text-[12px]">
             <span className="w-24 shrink-0 font-mono text-[11px]">{event.type}</span>
             <span className="text-muted-foreground min-w-0 flex-1 truncate">
@@ -888,12 +969,18 @@ function Activity() {
             </span>
           </li>
         ))}
-        {(events.data?.length ?? 0) === 0 && (
+        {rows.length === 0 && (
           <li className="text-muted-foreground py-8 text-center text-[12px]">
-            Nothing has happened yet.
+            {events.isLoading ? "Reading the log…" : "Nothing has happened yet."}
           </li>
         )}
       </ul>
+
+      <LoadMore
+        hasMore={events.hasNextPage}
+        isLoading={events.isFetchingNextPage}
+        onLoadMore={() => void events.fetchNextPage()}
+      />
     </div>
   );
 }

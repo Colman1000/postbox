@@ -6,6 +6,7 @@ import type {
   Folder,
   Identity,
   Label,
+  Paginated,
   Stats,
   Template,
 } from "../../shared/types.ts";
@@ -405,22 +406,35 @@ workspace.get("/stats", async (c) => {
 // ── access log ──────────────────────────────────────────────────────────────
 
 /**
+ * How much of either log one request carries.
+ *
+ * Both are read inside a dialog that is a few hundred pixels tall, so a page
+ * is sized to fill it once over rather than to guess how far anyone will
+ * scroll. The cursor is the id: these are ULIDs, so ordering by id is
+ * chronological order and the keyset needs no second column and no tiebreak.
+ */
+const LOG_PAGE = 30;
+
+/**
  * Who was here, and what they changed.
  *
- * Newest first and capped, because this is a thing you scan rather than page
- * through — if the answer is not near the top, the question is usually "when
- * did this start", which the date on the last row answers just as well.
+ * Newest first, a page at a time. It used to answer with a single capped slab
+ * — which was fine while the only rows were sign-ins, and stopped being fine
+ * the moment routine changes started landing here too: a cap is a horizon, and
+ * "when did this start" cannot be answered past one.
  */
 workspace.get("/audit", async (c) => {
-  const limit = Math.min(Number(c.req.query("limit") ?? 100), 250);
+  const cursor = c.req.query("cursor");
+  const limit = Math.min(Number(c.req.query("limit") ?? LOG_PAGE), 100);
 
   const { results } = await c.env.DB.prepare(
     `SELECT id, session_id, action, detail, ip, country, user_agent, created_at
        FROM audit
-      ORDER BY created_at DESC
+      ${cursor ? "WHERE id < ?" : ""}
+      ORDER BY id DESC
       LIMIT ?`,
   )
-    .bind(limit)
+    .bind(...(cursor ? [cursor] : []), limit + 1)
     .all<{
       id: string;
       session_id: string | null;
@@ -432,46 +446,72 @@ workspace.get("/audit", async (c) => {
       created_at: number;
     }>();
 
-  return c.json(
-    (results ?? []).map(
-      (row): AuditEntry => ({
-        id: row.id,
-        sessionId: row.session_id,
-        action: row.action,
-        detail: row.detail,
-        ip: row.ip,
-        country: row.country,
-        userAgent: row.user_agent,
-        createdAt: row.created_at,
-      }),
-    ),
-  );
+  const rows = results ?? [];
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const payload: Paginated<AuditEntry> = {
+    items: page.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      action: row.action,
+      detail: row.detail,
+      ip: row.ip,
+      country: row.country,
+      userAgent: row.user_agent,
+      createdAt: row.created_at,
+    })),
+    cursor: hasMore ? page[page.length - 1].id : null,
+    hasMore,
+  };
+  return c.json(payload);
 });
 
 // ── activity ────────────────────────────────────────────────────────────────
 
+/**
+ * What the mailbox itself did — delivered, failed, snoozed, purged.
+ *
+ * Paged the same way as the access log, and for the same reason: the last
+ * sixty events were all anyone could ever see, so a delivery failure worth
+ * explaining aged out of view whether or not it had been read.
+ */
 workspace.get("/events", async (c) => {
-  const { results } = await c.env.DB.prepare(
-    "SELECT id, type, message_id, thread_id, detail, created_at FROM events ORDER BY created_at DESC LIMIT 60",
-  ).all<{
-    id: string;
-    type: string;
-    message_id: string | null;
-    thread_id: string | null;
-    detail: string | null;
-    created_at: number;
-  }>();
+  const cursor = c.req.query("cursor");
+  const limit = Math.min(Number(c.req.query("limit") ?? LOG_PAGE), 100);
 
-  return c.json(
-    (results ?? []).map(
-      (row): ActivityEvent => ({
-        id: row.id,
-        type: row.type,
-        messageId: row.message_id,
-        threadId: row.thread_id,
-        detail: row.detail,
-        createdAt: row.created_at,
-      }),
-    ),
-  );
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, type, message_id, thread_id, detail, created_at
+       FROM events
+      ${cursor ? "WHERE id < ?" : ""}
+      ORDER BY id DESC
+      LIMIT ?`,
+  )
+    .bind(...(cursor ? [cursor] : []), limit + 1)
+    .all<{
+      id: string;
+      type: string;
+      message_id: string | null;
+      thread_id: string | null;
+      detail: string | null;
+      created_at: number;
+    }>();
+
+  const rows = results ?? [];
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+
+  const payload: Paginated<ActivityEvent> = {
+    items: page.map((row) => ({
+      id: row.id,
+      type: row.type,
+      messageId: row.message_id,
+      threadId: row.thread_id,
+      detail: row.detail,
+      createdAt: row.created_at,
+    })),
+    cursor: hasMore ? page[page.length - 1].id : null,
+    hasMore,
+  };
+  return c.json(payload);
 });

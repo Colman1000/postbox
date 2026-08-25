@@ -103,11 +103,30 @@ export const useTemplates = () =>
 export const useSettings = () =>
   useQuery({ queryKey: keys.settings, queryFn: api.settings, staleTime: 300_000 });
 
+/**
+ * The two logs in Settings.
+ *
+ * Both are read the same way — newest first, scrolled until the answer shows
+ * up — so both page rather than arriving as one slab. Neither is fetched until
+ * its tab is opened, since Radix does not mount a panel nobody has looked at.
+ */
 export const useEvents = () =>
-  useQuery({ queryKey: keys.events, queryFn: api.events, staleTime: 20_000 });
+  useInfiniteQuery({
+    queryKey: keys.events,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.events(pageParam),
+    getNextPageParam: (last) => (last.hasMore ? last.cursor : undefined),
+    staleTime: 20_000,
+  });
 
 export const useAudit = () =>
-  useQuery({ queryKey: keys.audit, queryFn: () => api.audit(), staleTime: 20_000 });
+  useInfiniteQuery({
+    queryKey: keys.audit,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.audit(pageParam),
+    getNextPageParam: (last) => (last.hasMore ? last.cursor : undefined),
+    staleTime: 20_000,
+  });
 
 export function useContacts(query: string) {
   return useQuery({

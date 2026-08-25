@@ -234,6 +234,9 @@ export const api = {
 
   stats: () => request<Stats>("/stats"),
   updates: (since: number) => request<MailUpdate>(`/updates?since=${since}`),
-  events: () => request<ActivityEvent[]>("/events"),
-  audit: (limit = 100) => request<AuditEntry[]>(`/audit?limit=${limit}`),
+  // Both logs page newest-first on an id cursor; see the note on LOG_PAGE.
+  events: (cursor?: string | null) =>
+    request<Paginated<ActivityEvent>>(`/events${cursor ? `?cursor=${cursor}` : ""}`),
+  audit: (cursor?: string | null) =>
+    request<Paginated<AuditEntry>>(`/audit${cursor ? `?cursor=${cursor}` : ""}`),
 };
