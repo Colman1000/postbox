@@ -1,10 +1,24 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AtSignIcon, BellIcon, PlusIcon, Trash2Icon, Volume2Icon } from "lucide-react";
+import {
+  AtSignIcon,
+  BellIcon,
+  CheckIcon,
+  MonitorIcon,
+  MoonIcon,
+  PencilLineIcon,
+  PipetteIcon,
+  PlusIcon,
+  SunIcon,
+  Trash2Icon,
+  Volume2Icon,
+} from "lucide-react";
 import { toast } from "sonner";
 import type { SessionInfo } from "@shared/types.ts";
+import { useBrand } from "@/hooks/use-brand.ts";
 import type { LiveStatus } from "@/hooks/use-new-mail.ts";
 import { api, ApiError } from "@/lib/api.ts";
+import { BRAND_PRESETS } from "@/lib/brand.ts";
 import { deviceSummary, fileSize, fullDate, relativeTime } from "@/lib/format.ts";
 import {
   notificationsSupported,
@@ -24,7 +38,9 @@ import {
   useStats,
   useTemplates,
 } from "@/lib/queries.ts";
+import { applyTheme, readTheme, type Theme } from "@/lib/theme.ts";
 import { cn } from "@/lib/utils.ts";
+import { Badge } from "@/components/ui/badge.tsx";
 import { Button } from "@/components/ui/button.tsx";
 import {
   Dialog,
@@ -35,6 +51,7 @@ import {
 } from "@/components/ui/dialog.tsx";
 import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
+import { Progress } from "@/components/ui/progress.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
 import { Switch } from "@/components/ui/switch.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
@@ -62,11 +79,19 @@ export function SettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="identities" className="px-6 pb-6 max-md:px-4 max-md:pb-4">
-          <TabsList className="mb-4 max-md:w-full">
+        {/* `min-w-0`: the dialog is a grid, so without it this column is sized to
+            the tab strip's min-content and the whole dialog grows past the phone. */}
+        <Tabs
+          defaultValue="identities"
+          className="min-w-0 px-6 pb-6 max-md:px-4 max-md:pb-4"
+        >
+          {/* Seven tabs do not fit a phone. Scrolling the strip keeps them all
+              reachable without the dialog itself growing sideways. */}
+          <TabsList className="mb-4 max-w-full justify-start overflow-x-auto max-md:w-full">
             <TabsTrigger value="identities">Addresses</TabsTrigger>
             <TabsTrigger value="labels">Labels</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
+            <TabsTrigger value="appearance">Appearance</TabsTrigger>
             <TabsTrigger value="alerts">Alerts</TabsTrigger>
             <TabsTrigger value="access">Access</TabsTrigger>
             <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -81,6 +106,9 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="templates">
               <Templates />
+            </TabsContent>
+            <TabsContent value="appearance">
+              <Appearance />
             </TabsContent>
             <TabsContent value="alerts">
               <Alerts live={live} />
@@ -379,6 +407,182 @@ function Templates() {
         ))}
       </ul>
     </div>
+  );
+}
+
+// ── appearance ───────────────────────────────────────────────────────────────
+
+const THEMES: { value: Theme; label: string; icon: typeof SunIcon }[] = [
+  { value: "light", label: "Light", icon: SunIcon },
+  { value: "dark", label: "Dark", icon: MoonIcon },
+  { value: "system", label: "System", icon: MonitorIcon },
+];
+
+/** The greyscale the interface is built from, shown as a swatch. */
+const MONOCHROME_SWATCH = "linear-gradient(135deg, oklch(0.97 0 0) 50%, oklch(0.3 0 0) 50%)";
+
+/**
+ * How the app looks.
+ *
+ * Theme is per-device — which screen you are reading on decides that, not
+ * which mailbox — so it stays in this browser. The brand colour is the
+ * mailbox's, and is saved with it, because a colour that only one laptop knows
+ * about is not a brand.
+ */
+function Appearance() {
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const { brand, preview, choose } = useBrand();
+
+  // A colour input fires on every pixel of a drag. Paint all of them; save the
+  // one the hand stopped on.
+  const pending = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(pending.current), []);
+
+  function drag(hex: string) {
+    preview(hex);
+    clearTimeout(pending.current);
+    pending.current = setTimeout(() => choose(hex), 500);
+  }
+
+  const custom = brand !== null && !BRAND_PRESETS.some((preset) => preset.hex === brand);
+
+  return (
+    <div className="space-y-6">
+      <section className="space-y-2.5">
+        <div>
+          <p className="text-[13px] font-medium">Theme</p>
+          <p className="text-muted-foreground text-[12px] leading-relaxed">
+            Kept in this browser, since it answers to the room you are in.
+          </p>
+        </div>
+        <div className="flex gap-2 max-sm:flex-col">
+          {THEMES.map((option) => (
+            <Button
+              key={option.value}
+              variant={theme === option.value ? "default" : "outline"}
+              size="sm"
+              className="flex-1"
+              aria-pressed={theme === option.value}
+              onClick={() => {
+                setTheme(option.value);
+                applyTheme(option.value);
+              }}
+            >
+              <option.icon /> {option.label}
+            </Button>
+          ))}
+        </div>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-2.5">
+        <div>
+          <p className="text-[13px] font-medium">Brand colour</p>
+          <p className="text-muted-foreground text-[12px] leading-relaxed">
+            The one colour in an otherwise grey interface: Compose, unread
+            counts, the selected conversation, the focus ring. Postbox takes the
+            hue and the saturation and picks the brightness itself, so a colour
+            that is legible in daylight is still legible at night. Saved with
+            the mailbox, so it follows you to another browser.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <Swatch
+            label="Monochrome"
+            background={MONOCHROME_SWATCH}
+            selected={brand === null}
+            onSelect={() => choose(null)}
+          />
+
+          {BRAND_PRESETS.map((preset) => (
+            <Swatch
+              key={preset.hex}
+              label={preset.name}
+              background={preset.hex}
+              selected={brand === preset.hex}
+              onSelect={() => choose(preset.hex)}
+            />
+          ))}
+
+          {/*
+            The native picker, because a brand colour usually already exists
+            somewhere as a hex and the eyedropper is the browser's to give.
+          */}
+          <label
+            title="Custom colour"
+            className={cn(
+              "relative flex size-8 cursor-pointer items-center justify-center rounded-full border",
+              custom
+                ? "outline-foreground outline-2 outline-offset-2"
+                : "bg-muted hover:bg-accent",
+            )}
+            style={custom ? { background: brand! } : undefined}
+          >
+            <PipetteIcon
+              className={cn("size-3.5", custom ? "text-white" : "text-muted-foreground")}
+            />
+            <input
+              type="color"
+              value={brand ?? "#2563eb"}
+              onChange={(event) => drag(event.target.value)}
+              aria-label="Custom brand colour"
+              className="absolute inset-0 cursor-pointer opacity-0"
+            />
+          </label>
+        </div>
+      </section>
+
+      <div className="space-y-3 rounded-lg border p-3">
+        <p className="text-muted-foreground text-[10px] tracking-wider uppercase">
+          Preview
+        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm">
+            <PencilLineIcon /> Compose
+          </Button>
+          <span className="bg-accent text-accent-foreground flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium">
+            Inbox
+            <Badge className="min-w-5 justify-center tabular-nums">12</Badge>
+          </span>
+          <Progress value={62} className="h-1 w-24" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Swatch({
+  label,
+  background,
+  selected,
+  onSelect,
+}: {
+  label: string;
+  background: string;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      aria-pressed={selected}
+      onClick={onSelect}
+      style={{ background }}
+      className={cn(
+        "flex size-8 items-center justify-center rounded-full border transition-transform",
+        selected ? "outline-foreground outline-2 outline-offset-2" : "hover:scale-110",
+      )}
+    >
+      {/* White with its own shadow, so the tick survives both a pale swatch and
+          a dark one — including the two-tone monochrome one. */}
+      {selected && (
+        <CheckIcon className="size-4 text-white drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.55)]" />
+      )}
+    </button>
   );
 }
 

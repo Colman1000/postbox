@@ -53,7 +53,7 @@ A `mailto:` link in a message opens the composer here, filled in with whatever t
   <img src="docs/screenshots/mobile-drawer.png" width="270" alt="Navigation drawer on mobile">
 </p>
 
-There's also send later, snooze, labels, templates, per-address signatures, starring, full-text search, attachments, light and dark, a Trash that empties for good when you ask it to, and a running count of how many sends you have left today.
+There's also send later, snooze, labels, templates, per-address signatures, starring, full-text search, attachments, light and dark, a brand colour of your own if grey is not your grey, a Trash that empties for good when you ask it to, and a running count of how many sends you have left today.
 
 ## Setup
 

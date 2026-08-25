@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Address, Folder, Message, SessionInfo, Thread } from "@shared/types.ts";
 import { api } from "@/lib/api.ts";
+import { useBrand } from "@/hooks/use-brand.ts";
 import { useHotkeys } from "@/hooks/use-hotkeys.ts";
 import { useIsMobile } from "@/hooks/use-media-query.ts";
 import { useSearch, useThreadAction, useThreads } from "@/lib/queries.ts";
@@ -86,6 +87,11 @@ export function MailApp({ session }: { session: SessionInfo }) {
   }, []);
   const { unread, live } = useNewMail({ onOpenThread: openArrival });
   useMailTitle(unread, session.domain);
+
+  // The brand colour is already on the page from localStorage; this is what
+  // fetches the mailbox's own answer and corrects it on a browser that has
+  // never been here.
+  useBrand();
 
   // Launched from a mailto: link — the browser's protocol handler, or a link
   // anywhere that points here. Read once and then scrubbed out of the URL, so

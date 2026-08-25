@@ -10,7 +10,9 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Postbox</title>
     <script>
-      // Applied before first paint so the app never flashes the wrong theme.
+      // Applied before first paint so the app never flashes the wrong theme or
+      // the wrong brand colour. Both are mirrored into localStorage for exactly
+      // this reason; the mailbox still holds the brand colour of record.
       (() => {
         try {
           const stored = localStorage.getItem("postbox:theme");
@@ -18,6 +20,12 @@
             stored === "dark" ||
             (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
           document.documentElement.classList.toggle("dark", dark);
+
+          const brand = localStorage.getItem("postbox:brand");
+          if (brand && /^#[0-9a-f]{6}$/i.test(brand)) {
+            document.documentElement.style.setProperty("--brand", brand);
+            document.documentElement.dataset.brand = "";
+          }
         } catch {}
       })();
     </script>

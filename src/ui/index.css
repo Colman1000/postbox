@@ -81,6 +81,44 @@
   --overlay: oklch(0 0 0 / 0.65);
 }
 
+/*
+ * One colour, if you want one.
+ *
+ * The ramp above is the design; this is its single exception. Choosing a brand
+ * colour under Settings → Appearance sets `--brand` on the root element, and
+ * the tokens below borrow that colour's hue and saturation while keeping the
+ * lightness the interface was built around. You decide which colour it is; the
+ * ramp still decides how bright — which is what stops a neon pink from turning
+ * the unread count into something you cannot read.
+ *
+ * Only the tokens that carry emphasis change. Backgrounds, borders and text
+ * stay grey, because a mail client that tints everything is a mail client you
+ * cannot skim.
+ *
+ * Guarded by @supports, since relative colour syntax is what does the work:
+ * where it is missing every rule here drops out and the interface stays grey,
+ * rather than resolving to nothing and painting a button no colour at all.
+ */
+@supports (color: oklch(from white l c h)) {
+  :root[data-brand] {
+    --primary: oklch(from var(--brand) 0.53 clamp(0.02, c, 0.19) h);
+    --primary-foreground: oklch(0.985 0 0);
+    --ring: oklch(from var(--brand) 0.62 clamp(0.02, c, 0.16) h);
+    --accent: oklch(from var(--brand) 0.955 clamp(0, c, 0.04) h);
+    --accent-foreground: oklch(from var(--brand) 0.3 clamp(0, c, 0.08) h);
+  }
+
+  /* Same hue against a dark background: lighter, and a shade less saturated,
+     because chroma reads stronger on black than it does on white. */
+  :root[data-brand].dark {
+    --primary: oklch(from var(--brand) 0.74 clamp(0.02, c, 0.16) h);
+    --primary-foreground: oklch(0.16 0 0);
+    --ring: oklch(from var(--brand) 0.62 clamp(0.02, c, 0.14) h);
+    --accent: oklch(from var(--brand) 0.28 clamp(0, c, 0.05) h);
+    --accent-foreground: oklch(0.985 0 0);
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
