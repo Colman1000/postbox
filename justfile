@@ -85,7 +85,13 @@ login: _install
 relogin: _install
     @{{alchemy}} login
 
-# Mint a correctly-scoped Cloudflare API token — run `just login` first.
+# Mint a Cloudflare API token from your sign-in — run `just login` first.
+#
+# Its scopes come from what Alchemy's OAuth asked for, which covers Workers, D1,
+# KV, DNS and zone reads, but not Email Routing. Postbox needs Email Routing
+# Rules → Edit as well, so a token from here still wants one permission added by
+# hand at https://dash.cloudflare.com/profile/api-tokens. `just doctor` says so
+# in as many words if it is missing.
 token: _install
     @{{alchemy}} util create-cloudflare-token
 

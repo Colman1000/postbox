@@ -30,7 +30,11 @@ import {
 } from "alchemy/cloudflare";
 
 import { resolveConfig } from "./infra/config.ts";
-import { captureProvenance, classifyRecords, recordExists } from "./infra/provenance.ts";
+import {
+  captureProvenance,
+  classifyRecords,
+  foreignRecordExists,
+} from "./infra/provenance.ts";
 import {
   ResendDomain,
   ResendSendingKey,
@@ -157,13 +161,19 @@ const sendingDomain = usingResend
 // DMARC is the record nobody writes and every receiver looks for. Without one
 // a domain has no published policy, and mail from a new domain with no policy
 // is exactly the shape of mail that lands in spam — so Postbox publishes one
-// if, and only if, the domain does not already have its own. A policy already
-// there is a decision about the whole domain, quite possibly stricter than
-// ours, and replacing it silently would be worse than never writing it.
+// if, and only if, the domain does not already have *somebody else's*. A
+// policy already there is a decision about the whole domain, quite possibly
+// stricter than ours, and replacing it silently would be worse than never
+// writing it. One Postbox wrote is a different matter: it has to stay in the
+// desired set to survive the next deploy.
+//
+// Asked on both paths, not just Resend's. Nothing about a published policy is
+// specific to who does the sending, and Cloudflare Email Sending publishes no
+// DMARC of its own either.
 const dmarcName = `_dmarc.${config.domain}`;
-const dmarcAlready = usingResend ? await recordExists(api, zoneId, "TXT", dmarcName) : true;
+const dmarcTaken = await foreignRecordExists(api, zoneId, "TXT", dmarcName);
 
-const dmarcRecord = dmarcAlready
+const dmarcRecord = dmarcTaken
   ? []
   : [
       {
@@ -175,10 +185,18 @@ const dmarcRecord = dmarcAlready
       },
     ];
 
-const wanted = [...(sendingDomain?.records ?? []), ...dmarcRecord];
-const split = sendingDomain
-  ? await classifyRecords(api, zoneId, wanted)
-  : { ours: [] as typeof wanted, adopted: [] as typeof wanted };
+// The provider's own records keep their provider in the comment; DMARC is
+// Postbox's regardless of which provider is sending.
+const providerRecords = (sendingDomain?.records ?? []).map((record) => ({
+  ...record,
+  purpose: `Resend ${record.purpose}`,
+}));
+
+const wanted = [...providerRecords, ...dmarcRecord];
+const split =
+  wanted.length > 0
+    ? await classifyRecords(api, zoneId, wanted)
+    : { ours: [] as typeof wanted, adopted: [] as typeof wanted };
 
 const asRecord = (record: (typeof wanted)[number]) => ({
   type: record.type as "TXT" | "MX" | "CNAME" | "A" | "AAAA",
@@ -187,19 +205,26 @@ const asRecord = (record: (typeof wanted)[number]) => ({
   priority: record.priority,
   ttl: 1, // 1 = automatic
   proxied: false,
-  comment: `Postbox · Resend ${record.purpose}`,
+  comment: `Postbox · ${record.purpose}`,
 });
 
-const sendingDns = sendingDomain
-  ? await DnsRecords("resend-dns", {
-      zoneId,
-      records: split.ours.map(asRecord),
-    })
-  : undefined;
+// The id is the key Alchemy files this resource's state under, so every
+// deployment that already has a "resend-dns" has to keep it: a rename reads as
+// one resource gone and another arrived, which would delete live DNS and write
+// it straight back.
+const dnsId = usingResend ? "resend-dns" : "postbox-dns";
+
+const managedDns =
+  sendingDomain || split.ours.length > 0
+    ? await DnsRecords(dnsId, {
+        zoneId,
+        records: split.ours.map(asRecord),
+      })
+    : undefined;
 
 const adoptedDns =
-  sendingDomain && split.adopted.length > 0
-    ? await DnsRecords("resend-dns-adopted", {
+  split.adopted.length > 0
+    ? await DnsRecords(`${dnsId}-adopted`, {
         zoneId,
         records: split.adopted.map(asRecord),
         delete: false,
@@ -207,11 +232,11 @@ const adoptedDns =
     : undefined;
 
 const verification =
-  sendingDomain && sendingDns
+  sendingDomain && managedDns
     ? await ResendVerification("resend-verify", {
         domainId: sendingDomain.domainId,
         apiKey: config.resendApiKey,
-        dependsOn: [...sendingDns.records, ...(adoptedDns?.records ?? [])]
+        dependsOn: [...managedDns.records, ...(adoptedDns?.records ?? [])]
           .map((r) => r.id)
           .join(","),
       })
@@ -312,10 +337,36 @@ await EmailCatchAll("catch-all", {
   actions: [{ type: "worker", value: [config.names.worker] }],
 });
 
+/**
+ * Whether anyone has clicked the link Cloudflare sent the forwarding address.
+ *
+ * Asked of Cloudflare rather than read off `forwardAddress.verified`, because
+ * Alchemy skips an unchanged resource without re-reading it — so that field
+ * goes on saying what it said the day the address was created, which is "no",
+ * for as long as the address exists. The id is safe to reuse from state: it
+ * does not change, only the verification does.
+ */
+async function isVerified(addressId: string): Promise<boolean> {
+  const response = await api.get(
+    `/accounts/${api.accountId}/email/routing/addresses/${addressId}`,
+  );
+  if (!response.ok) return false;
+  const body = (await response.json()) as { result?: { verified?: string | null } };
+  return Boolean(body.result?.verified);
+}
+
 // A higher-priority literal rule cannot express "everything", so the optional
 // Gmail copy is made by the Worker itself; this rule only exists to keep the
 // destination address verified and visible in the dashboard.
-if (forwardAddress) {
+//
+// It waits for the confirmation rather than failing on it. Cloudflare rejects
+// any rule naming an unconfirmed address, and the confirmation is an email a
+// human has to open — which cannot happen inside the same deploy that sends
+// it. Failing here would mean every first deploy with FORWARD_TO set dies at
+// the last resource, having already built everything that matters.
+const forwardVerified = forwardAddress ? await isVerified(forwardAddress.addressId) : false;
+
+if (forwardAddress && forwardVerified) {
   await EmailRule("forward-postmaster", {
     zone: config.domain,
     name: "Postbox — postmaster passthrough",
@@ -340,9 +391,9 @@ if (app.phase === "up") {
     provider: config.mailProvider,
     sendingStatus: usingResend ? (verification?.status ?? "pending") : "verified",
     forwardTo: forwardAddress?.email,
-    forwardVerified: forwardAddress?.verified ?? false,
+    forwardVerified,
     dnsRecordCount:
-      (sendingDns?.records.length ?? 0) + (adoptedDns?.records.length ?? 0),
+      (managedDns?.records.length ?? 0) + (adoptedDns?.records.length ?? 0),
     vaultRead: readVault(config.stage),
   });
 }

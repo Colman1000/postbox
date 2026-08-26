@@ -113,7 +113,9 @@ export async function printSummary(input: SummaryInput): Promise<void> {
   if (input.forwardTo && !input.forwardVerified) {
     todo.push(
       `Cloudflare emailed ${input.forwardTo} a confirmation link. Click it to turn\n` +
-        "     on the forwarding copy. Receiving inside Postbox already works.",
+        "     on the forwarding copy. Receiving inside Postbox already works.\n" +
+        "     Then re-run to add the postmaster rule, which waits on the same click:\n" +
+        paint(c.cyan, "       just up"),
     );
   }
 

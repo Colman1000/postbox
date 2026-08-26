@@ -180,24 +180,31 @@ function stripRule(rule: CatchAllRule): CatchAllRule {
 }
 
 /**
- * Whether a record of this type and name already exists at all, regardless of
- * who wrote it.
+ * Whether a record of this type and name already exists *and belongs to
+ * somebody else*.
  *
  * Used for records Postbox will only ever *add* — a DMARC policy someone
  * already published is a decision about their whole domain, and quietly
  * replacing it with a weaker one would be worse than not writing it at all.
+ *
+ * Postbox's own record deliberately does not count as taken. "Does this exist"
+ * is the wrong question from the second deploy onwards, because by then the
+ * record found is the one written last time: reading that as taken drops it
+ * out of the desired set, and a managed record that leaves the desired set is
+ * deleted. The result is a policy that disappears on every other `just up`.
  */
-export async function recordExists(
+export async function foreignRecordExists(
   api: CloudflareApi,
   zoneId: string,
   type: string,
   name: string,
 ): Promise<boolean> {
-  const matches = await json<unknown[]>(
+  const matches = await json<{ comment?: string | null }[]>(
     api,
     `/zones/${zoneId}/dns_records?type=${encodeURIComponent(type)}&name=${encodeURIComponent(name)}`,
   );
-  return (matches ?? []).length > 0;
+  const live = (matches ?? [])[0];
+  return Boolean(live) && !(live.comment ?? "").includes(POSTBOX_MARK);
 }
 
 export interface WantedRecord {
