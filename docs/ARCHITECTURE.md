@@ -142,7 +142,13 @@ Three variables cannot be derived, because each is either a human decision or an
 
 Everything else is worked out at deploy time: the account ID from the token, the zone ID from the domain, the hostname as `mail.$DOMAIN`, the default identity as `hello@$DOMAIN`, the Resend domain and its DNS records, a send-only Resend key, the session signing secret, the UI password, and every resource name.
 
-`infra/names.ts` prints the derived names as shell exports, and the justfile evals it. There is one definition of "what is this stage's database called", and the CLI cannot drift from the deploy.
+`infra/names.ts` prints the derived names as shell exports, and the justfile evals it. There is one definition of "what is this stage's database called", and the CLI cannot drift from the deploy. It prints the chosen Cloudflare credential alongside them, because wrangler does not read `.env` and would otherwise run `just sql` against whatever token the shell happens to hold.
+
+### Which credential
+
+For the variables that decide *which account a deploy lands in* — `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_API_KEY`, `CLOUDFLARE_EMAIL`, `CLOUDFLARE_ACCOUNT_ID`, `CF_ACCOUNT_ID`, `CLOUDFLARE_PROFILE`, `ALCHEMY_PROFILE` — `.env` overrules the surrounding shell, and any of them `.env` does not name is unset before Alchemy looks. (Alchemy checks `CLOUDFLARE_API_KEY` before `CLOUDFLARE_API_TOKEN`, so a stale global key left in place would quietly outrank the file.) Every other variable keeps the usual precedence, where the real environment wins, because that is how CI passes `STAGE` in.
+
+A credential that exists only in the environment is not accepted on its own: `infra/preflight.ts` asks which token to use, names the accounts it can reach, and writes the answer to `.env`. `POSTBOX_ALLOW_ENV_TOKEN=1` is the CI opt-out, where there is no terminal to ask and exporting a secret is the deliberate act the prompt was looking for.
 
 ## Credential handling
 

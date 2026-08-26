@@ -58,10 +58,47 @@ const RESEND_REGIONS = [
   "ap-northeast-1",
 ] as const;
 
+/**
+ * The variables that decide *which Cloudflare account a deploy lands in*.
+ *
+ * For these the file is authoritative and the surrounding shell is not. A
+ * CLOUDFLARE_API_TOKEN left over in someone's environment — from another
+ * project, another account, a `wrangler login` six months ago — must never
+ * quietly outrank the token this project was handed, because the failure mode
+ * is silent: the deploy succeeds, into the wrong account, and you find out
+ * weeks later. Everything else in .env keeps the ordinary precedence, where
+ * the real environment wins, since that is how CI passes STAGE and friends in.
+ */
+export const CLOUDFLARE_CREDENTIAL_KEYS = [
+  "CLOUDFLARE_API_TOKEN",
+  "CLOUDFLARE_API_KEY",
+  "CLOUDFLARE_EMAIL",
+  "CLOUDFLARE_ACCOUNT_ID",
+  "CF_ACCOUNT_ID",
+  "CLOUDFLARE_PROFILE",
+  "ALCHEMY_PROFILE",
+] as const;
+
+export interface CloudflareCredentials {
+  /** Where the credential a deploy would use comes from. */
+  source: "env-file" | "environment" | "profile" | "none";
+  /** The variable carrying it, when the source is a variable. */
+  key?: string;
+  /** Last four characters — enough to tell two tokens apart, and no more. */
+  fingerprint?: string;
+  /** Ambient variables dropped because .env was explicit about credentials. */
+  ignored: string[];
+}
+
+/** Ambient credentials .env overruled, recorded the first time it is read. */
+const ignoredByFile = new Map<string, string[]>();
+
 /** Minimal .env loader — no dependency, no surprises about precedence. */
 export function loadDotEnv(file = ".env"): void {
   const full = path.resolve(process.cwd(), file);
   if (!fs.existsSync(full)) return;
+
+  const fromFile = new Map<string, string>();
   for (const rawLine of fs.readFileSync(full, "utf8").split("\n")) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
@@ -75,11 +112,84 @@ export function loadDotEnv(file = ".env"): void {
     ) {
       value = value.slice(1, -1);
     }
-    // Real environment always wins over the file.
-    if (process.env[key] === undefined || process.env[key] === "") {
+    if (value !== "") fromFile.set(key, value);
+  }
+
+  // Naming an account id is not the same as naming a credential: only a token,
+  // a key or a profile is an answer to "who is deploying", and only that answer
+  // earns the right to discard the shell's.
+  const authInFile = [
+    "CLOUDFLARE_API_TOKEN",
+    "CLOUDFLARE_API_KEY",
+    "CLOUDFLARE_PROFILE",
+    "ALCHEMY_PROFILE",
+  ].some((k) => fromFile.has(k));
+  const ignored = ignoredByFile.get(full) ?? [];
+
+  for (const [key, value] of fromFile) {
+    const ambient = process.env[key];
+    const isCredential = (CLOUDFLARE_CREDENTIAL_KEYS as readonly string[]).includes(key);
+    if (isCredential) {
+      if (ambient && ambient !== value && !ignored.includes(key)) ignored.push(key);
+      process.env[key] = value;
+    } else if (ambient === undefined || ambient === "") {
       process.env[key] = value;
     }
   }
+
+  // Having said which credential to use, .env has also said which not to. An
+  // ambient CLOUDFLARE_API_KEY outranks a token inside Alchemy's own lookup,
+  // so leaving one in place would route around the file's answer entirely.
+  if (authInFile) {
+    for (const key of CLOUDFLARE_CREDENTIAL_KEYS) {
+      if (fromFile.has(key)) continue;
+      if (process.env[key]) {
+        if (!ignored.includes(key)) ignored.push(key);
+        delete process.env[key];
+      }
+    }
+  }
+
+  ignoredByFile.set(full, ignored);
+}
+
+/**
+ * Which Cloudflare credential a deploy from this directory would use, and what
+ * it ignored to get there. Call after loadDotEnv().
+ */
+export function cloudflareCredentials(file = ".env"): CloudflareCredentials {
+  const full = path.resolve(process.cwd(), file);
+  const ignored = ignoredByFile.get(full) ?? [];
+  const inFile = new Set<string>();
+  if (fs.existsSync(full)) {
+    for (const rawLine of fs.readFileSync(full, "utf8").split("\n")) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eq = line.indexOf("=");
+      if (eq === -1) continue;
+      if (line.slice(eq + 1).trim() !== "") inFile.add(line.slice(0, eq).trim());
+    }
+  }
+
+  for (const key of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"] as const) {
+    const value = process.env[key];
+    if (!value) continue;
+    return {
+      source: inFile.has(key) ? "env-file" : "environment",
+      key,
+      fingerprint: value.slice(-4),
+      ignored,
+    };
+  }
+
+  const profile =
+    process.env.CLOUDFLARE_PROFILE ??
+    process.env.ALCHEMY_PROFILE ??
+    (fs.existsSync(path.join(process.env.HOME ?? "", ".alchemy", "profiles.json"))
+      ? "default"
+      : undefined);
+
+  return profile ? { source: "profile", key: profile, ignored } : { source: "none", ignored };
 }
 
 class ConfigError extends Error {
@@ -118,18 +228,22 @@ export function resolveConfig(): PostboxConfig {
     problems.push(`DOMAIN "${domain}" is not a valid domain name.`);
   }
 
-  // Alchemy also accepts an OAuth profile (`just login`), so a token in the
-  // environment is one of two valid paths — we only complain if neither exists.
-  const hasToken = !!env("CLOUDFLARE_API_TOKEN") || !!env("CLOUDFLARE_API_KEY");
-  const hasProfile =
-    !!env("CLOUDFLARE_PROFILE") ||
-    !!env("ALCHEMY_PROFILE") ||
-    fs.existsSync(
-      path.join(process.env.HOME ?? "", ".alchemy", "profiles.json"),
-    );
-  if (!hasToken && !hasProfile) {
+  // Where the deploy would get its Cloudflare credential, now that .env has
+  // had the final say over the shell. Alchemy also accepts an OAuth profile
+  // (`just login`), so a token is one of two valid paths.
+  const credentials = cloudflareCredentials();
+  if (credentials.source === "none") {
     problems.push(
       "CLOUDFLARE_API_TOKEN is required (or run `just login` once to store a profile).",
+    );
+  } else if (credentials.source === "environment" && !env("POSTBOX_ALLOW_ENV_TOKEN")) {
+    // A token nobody pointed at this project is a guess, and the wrong guess
+    // deploys your mailbox into someone else's account without complaining.
+    problems.push(
+      `${credentials.key} is set in your environment but not in .env — Postbox will\n` +
+        "    not deploy on a credential it was never explicitly given. Run `just up`,\n" +
+        "    which asks you which token to use, or put it in .env yourself. In CI,\n" +
+        "    set POSTBOX_ALLOW_ENV_TOKEN=1 to say the environment is deliberate.",
     );
   }
 

@@ -63,11 +63,26 @@ const api = await createCloudflareApi({ accountId: config.accountId });
 let zoneId: string;
 try {
   ({ zoneId } = await findZoneForHostname(api, config.domain));
-} catch {
+} catch (error) {
+  // Only one of the failures in here means what it sounds like. Listing the
+  // zones can also fail because the API had a bad minute or because the token
+  // is short a permission, and telling someone their live domain does not
+  // exist is a worse answer than showing them the error we actually got.
+  const detail = error instanceof Error ? error.message : String(error);
+  if (!detail.startsWith("Could not find zone for hostname")) {
+    throw new Error(
+      `Could not check whether "${config.domain}" is a zone in Cloudflare account ` +
+        `${api.accountId}.\n  ${detail}\n` +
+        "  This is usually temporary — run `just up` again. If it keeps happening,\n" +
+        "  `just doctor` checks the token one permission at a time.",
+      { cause: error },
+    );
+  }
   throw new Error(
     `"${config.domain}" is not a zone in Cloudflare account ${api.accountId}.\n` +
       "  Add the domain at https://dash.cloudflare.com and point its nameservers\n" +
       "  at Cloudflare, then run `just up` again.",
+    { cause: error },
   );
 }
 

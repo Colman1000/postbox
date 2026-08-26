@@ -76,6 +76,13 @@ just up
 
 That's the whole setup. Everything else is worked out for you: your account ID, your zone, the hostname (`mail.yourdomain.com`), the database, the sending domain and its DNS records, a scoped API key, a session secret, and a strong password for the UI, which is printed once when it's created.
 
+A token that is only exported in your shell does not count as filled in. If `.env`
+does not name one, `just up` asks which token to use — showing you the account it
+belongs to — and writes your answer to `.env`, so the question is asked once and
+the answer is on disk rather than in whichever terminal you happened to run from.
+Where `.env` and your environment disagree, `.env` wins; in CI, where nobody can
+answer a prompt, set `POSTBOX_ALLOW_ENV_TOKEN=1` to say the environment is meant.
+
 ![Sign in](docs/screenshots/signin-dark.png)
 
 When you're done, `just down` removes every single thing it made — and nothing else. If your zone was already receiving mail through Email Routing, or a DNS record was there before Postbox was, it says so before it asks you to confirm and then leaves those alone. Where it cannot tell whether something predates it, it keeps it: leaving a switch on is untidy, turning off mail for a domain is an incident.

@@ -118,6 +118,9 @@ clean:
 
 # ── internals ───────────────────────────────────────────────────────────────
 
+# Two questions, in order: is there a .env at all, and does it say which
+# Cloudflare account this is. The second one is asked rather than assumed —
+# see infra/preflight.ts for why a token in the shell is not an answer.
 _preflight:
     @test -f .env || { \
       echo ""; \
@@ -129,6 +132,7 @@ _preflight:
       echo ""; \
       exit 1; \
     }
+    @node infra/preflight.ts
 
 # A node_modules directory that exists is not the same as one that is complete:
 # a half-finished or pre-alchemy install leaves the directory in place, and then

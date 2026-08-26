@@ -3,7 +3,12 @@
  *
  * Every check reports a fix, not just a failure.
  */
-import { resolveConfig, loadDotEnv, type PostboxConfig } from "./config.ts";
+import {
+  cloudflareCredentials,
+  loadDotEnv,
+  resolveConfig,
+  type PostboxConfig,
+} from "./config.ts";
 import { ensureStatePassword, readVault, vaultPath } from "./vault.ts";
 
 const ok = (s: string) => `  \x1b[32m✓\x1b[0m ${s}`;
@@ -27,6 +32,14 @@ try {
 }
 
 // ── Cloudflare ──────────────────────────────────────────────────────────────
+// Which token, not just whether there is one: "active" is small comfort if it
+// is a token from another project that happens to be exported in this shell.
+const credentials = cloudflareCredentials();
+if (credentials.ignored.length > 0) {
+  lines.push(
+    ok(`Credential taken from .env, not the shell — ignored ${credentials.ignored.join(", ")}`),
+  );
+}
 const cfToken = process.env.CLOUDFLARE_API_TOKEN;
 if (cfToken) {
   const res = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
@@ -34,7 +47,17 @@ if (cfToken) {
   });
   const body = (await res.json()) as { success?: boolean; result?: { status?: string } };
   if (res.ok && body.success && body.result?.status === "active") {
-    lines.push(ok("Cloudflare API token is active"));
+    // resolveConfig above has already refused an unclaimed environment token,
+    // so reaching here on one means CI opted in on purpose. Say which, either
+    // way: "active" answers a different question from "the one you meant".
+    lines.push(
+      ok(
+        `Cloudflare API token is active — …${credentials.fingerprint} from ` +
+          (credentials.source === "env-file"
+            ? ".env"
+            : "your environment (POSTBOX_ALLOW_ENV_TOKEN)"),
+      ),
+    );
 
     const zones = await fetch(
       `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(config.domain)}`,
