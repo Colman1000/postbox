@@ -64,7 +64,7 @@ Copy `.env.example` to `.env` and fill in three values:
 | | |
 |---|---|
 | `DOMAIN` | The domain you want mail on. |
-| `CLOUDFLARE_API_TOKEN` | From your Cloudflare dashboard. Or run `just login` instead. |
+| `CLOUDFLARE_API_TOKEN` | From your Cloudflare dashboard. Or run `just login` instead, and pick an account. |
 | `RESEND_API_KEY` | A free **Full access** key from [resend.com](https://resend.com/api-keys). Used once, at setup. |
 
 Then:
