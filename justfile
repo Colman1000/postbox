@@ -34,9 +34,10 @@ _default:
 up: _preflight _install
     @{{alchemy}} deploy ./alchemy.run.ts
 
-# Destroy what this project created — and only that. Anything that was already
-# there when Postbox arrived is left alone; `just down` prints which is which
-# before it asks you to confirm.
+# Anything that was already there when Postbox arrived is left alone; `just
+# down` prints which is which before it asks you to confirm.
+
+# Destroy what this project created — and only that.
 down: _preflight _install
     #!/usr/bin/env bash
     set -euo pipefail
