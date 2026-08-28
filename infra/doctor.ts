@@ -9,6 +9,7 @@ import {
   resolveConfig,
   type PostboxConfig,
 } from "./config.ts";
+import { runChecks } from "./deliverability.ts";
 import { ensureStatePassword, readVault, vaultPath } from "./vault.ts";
 
 const ok = (s: string) => `  \x1b[32m✓\x1b[0m ${s}`;
@@ -222,26 +223,24 @@ if (resendRes.ok) {
 
 // ── Deliverability ──────────────────────────────────────────────────────────
 // The question this answers is "will what I send be read", which is worth as
-// much as whether the deploy worked.
+// much as whether the deploy worked. A failure here is never fatal to a
+// deploy — DNS that has not propagated yet looks identical to DNS that is
+// wrong, and refusing to deploy over it would be wrong on the first run of
+// every new domain.
 try {
-  const dmarc = await fetch(
-    `https://cloudflare-dns.com/dns-query?name=_dmarc.${config.domain}&type=TXT`,
-    { headers: { accept: "application/dns-json" } },
-  );
-  const body = (await dmarc.json()) as { Answer?: { data?: string }[] };
-  const policy = (body.Answer ?? [])
-    .map((a) => (a.data ?? "").replace(/^"|"$/g, ""))
-    .find((value) => value.toLowerCase().startsWith("v=dmarc1"));
-
-  if (policy) {
-    const mode = /p=(\w+)/i.exec(policy)?.[1] ?? "none";
-    lines.push(ok(`DMARC published for ${config.domain} (p=${mode})`));
-  } else {
-    lines.push(warn(`No DMARC record for ${config.domain} — your mail is likelier to be filtered`));
-    lines.push(hint("`just up` publishes one. Set DMARC_POLICY to choose the policy."));
+  const checks = await runChecks(config);
+  for (const check of checks) {
+    if (check.status === "ok") lines.push(ok(check.text));
+    else if (check.status === "bad") lines.push(bad(check.text));
+    else if (check.status === "warn") lines.push(warn(check.text));
+    else continue; // `info` is `just mailcheck` detail, not a deploy blocker
+    for (const line of check.hints) lines.push(hint(line));
+  }
+  if (checks.some((c) => c.status !== "ok")) {
+    lines.push(hint("Full report, including what is merely advisable: `just mailcheck`"));
   }
 } catch {
-  lines.push(warn("Could not check DMARC — DNS lookup failed"));
+  lines.push(warn("Could not check deliverability — DNS lookups failed"));
 }
 
 // ── Local state ─────────────────────────────────────────────────────────────

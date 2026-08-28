@@ -5,6 +5,7 @@ import {
   ClockIcon,
   EyeIcon,
   FileTextIcon,
+  InfoIcon,
   LoaderCircleIcon,
   Maximize2Icon,
   Minimize2Icon,
@@ -13,11 +14,17 @@ import {
   SendIcon,
   SquareCodeIcon,
   Trash2Icon,
+  TriangleAlertIcon,
   TypeIcon,
   XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import type { Address, AttachmentMeta, SessionInfo } from "@shared/types.ts";
+import type {
+  Address,
+  AttachmentMeta,
+  DeliverabilityFinding,
+  SessionInfo,
+} from "@shared/types.ts";
 import { MAX_ATTACHMENT_BYTES } from "@shared/types.ts";
 import { api, ApiError, UploadCancelled } from "@/lib/api.ts";
 import { fileSize } from "@/lib/format.ts";
@@ -125,6 +132,8 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState<number | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
+  const [findings, setFindings] = useState<DeliverabilityFinding[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
 
   const draftId = useRef<string | undefined>(seed.id);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -209,6 +218,32 @@ export function Composer({
     return () => clearTimeout(timer);
   }, [persist]);
 
+  // ── deliverability ────────────────────────────────────────────────────────
+  // Checked while you write rather than on send, because after a send the
+  // advice is only useful for the next message. Debounced well behind the
+  // autosave: this is a background opinion, not a validation error, and it
+  // should never make the composer feel like it is watching you type.
+  useEffect(() => {
+    if (recipientCount === 0 && !subject.trim() && !body.trim()) {
+      setFindings([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.deliverability({ ...payload, id: draftId.current });
+        setFindings(result.findings);
+      } catch {
+        // A failed check is not a problem the writer needs to hear about.
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [payload, recipientCount, subject, body]);
+
+  const visibleFindings = useMemo(
+    () => findings.filter((finding) => !dismissed.has(finding.code)),
+    [findings, dismissed],
+  );
+
   // ── send ──────────────────────────────────────────────────────────────────
 
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -222,10 +257,21 @@ export function Composer({
           scheduledAt: at,
         });
         refreshAfterSend(client, result.threadId);
+        // Said once, after the fact, for the message that was sent before the
+        // live check had anything to show. Not an error — it already went.
+        const noted =
+          result.warnings && result.warnings.length > 0
+            ? {
+                description:
+                  result.warnings.length === 1
+                    ? result.warnings[0]!.message
+                    : `${result.warnings.length} things a spam filter may notice — see the next draft.`,
+              }
+            : undefined;
         if (at) {
-          toast.success(`Scheduled for ${new Date(at).toLocaleString()}`);
+          toast.success(`Scheduled for ${new Date(at).toLocaleString()}`, noted);
         } else {
-          toast.success("Sent");
+          toast.success("Sent", noted);
         }
         return result.threadId;
       } catch (error) {
@@ -597,6 +643,38 @@ export function Composer({
           </div>
         )}
       </div>
+
+      {/* What a spam filter is about to notice. Advisory only — it never
+          blocks a send, and it is deliberately quiet: one line per finding,
+          each dismissable, none of it in the way of the Send button. */}
+      {visibleFindings.length > 0 && (
+        <div className="shrink-0 border-t">
+          {visibleFindings.map((finding) => (
+            <div
+              key={finding.code}
+              className="flex items-start gap-2 px-3 py-1.5 text-[11px] leading-relaxed"
+            >
+              {finding.level === "warn" ? (
+                <TriangleAlertIcon className="mt-[3px] size-3 shrink-0 text-amber-600 dark:text-amber-500" />
+              ) : (
+                <InfoIcon className="text-muted-foreground mt-[3px] size-3 shrink-0" />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="text-foreground">{finding.message}</span>{" "}
+                <span className="text-muted-foreground">{finding.fix}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setDismissed((current) => new Set(current).add(finding.code))}
+                className="text-muted-foreground hover:text-foreground mt-[2px] shrink-0"
+                aria-label={`Dismiss: ${finding.message}`}
+              >
+                <XIcon className="size-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Attachments */}
       {(attachments.length > 0 || uploads.length > 0) && (

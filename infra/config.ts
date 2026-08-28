@@ -39,6 +39,41 @@ export interface PostboxConfig {
    * "reject". Postbox never replaces a policy that is already there.
    */
   dmarcPolicy: "none" | "quarantine" | "reject";
+  /**
+   * Where receivers should mail DMARC aggregate reports, or undefined to
+   * publish no `rua` at all.
+   *
+   * Defaults to `mailto:dmarc@DOMAIN`, which needs no setup because the
+   * catch-all already delivers that address into Postbox. Without a `rua` a
+   * DMARC record is write-only: it tells receivers what to do and tells you
+   * nothing back, so there is never a moment when tightening the policy is an
+   * informed decision rather than a guess.
+   */
+  dmarcRua?: string;
+  /**
+   * Percentage of failing mail the policy applies to, for a staged rollout.
+   * Undefined means the DMARC default of 100.
+   */
+  dmarcPct?: number;
+  /**
+   * Where receivers should mail TLS delivery reports (RFC 8460), or undefined
+   * to publish no `_smtp._tls` record. One TXT, no moving parts: it is how you
+   * find out that somebody's mail to you is failing to negotiate TLS.
+   */
+  tlsRptTo?: string;
+  /**
+   * MTA-STS mode. "testing" publishes the policy and collects reports without
+   * ever refusing a delivery; "enforce" makes an unauthenticated or
+   * downgraded connection to your MX a hard failure. Off by default, because
+   * it stands up a second hostname and enforcing it wrongly loses inbound mail.
+   */
+  mtaSts: "off" | "testing" | "enforce";
+  /**
+   * Value for a `google-site-verification` TXT record, if you want to claim
+   * the domain in Google Postmaster Tools — the only place Gmail will tell you
+   * your own spam rate and reputation.
+   */
+  siteVerification?: string;
   /** Operator-supplied UI password, if any. */
   appPassword?: string;
   /** Explicit Cloudflare account, if the token spans several. */
@@ -279,6 +314,44 @@ export function resolveConfig(): PostboxConfig {
     );
   }
 
+  // Reporting addresses are URIs, not addresses — `mailto:` is required by the
+  // spec and the single most common reason a record parses but never reports.
+  const reportUri = (name: string, fallback: string): string | undefined => {
+    const raw = env(name);
+    if (raw && raw.toLowerCase() === "off") return undefined;
+    const value = raw ?? fallback;
+    for (const uri of value.split(",").map((part) => part.trim())) {
+      if (!/^(mailto:[^\s@]+@[^\s@]+\.[^\s@]+|https?:\/\/\S+)$/i.test(uri)) {
+        problems.push(
+          `${name} "${uri}" must be a mailto: or https:// URI — a bare address is not one.` +
+            (uri.includes("@") && !uri.includes(":") ? ` Try "mailto:${uri}".` : ""),
+        );
+        return undefined;
+      }
+    }
+    return value;
+  };
+
+  // Both default to a mailbox on the domain itself, which needs no setup: the
+  // catch-all already delivers every address here. No external destination
+  // means no `_report._dmarc` authorisation record to forget, either.
+  const dmarcRua = domain ? reportUri("DMARC_RUA", `mailto:dmarc@${domain}`) : undefined;
+  const tlsRptTo = domain ? reportUri("TLS_RPT", `mailto:tls-reports@${domain}`) : undefined;
+
+  const dmarcPctRaw = env("DMARC_PCT");
+  let dmarcPct: number | undefined;
+  if (dmarcPctRaw !== undefined) {
+    dmarcPct = Number(dmarcPctRaw);
+    if (!Number.isInteger(dmarcPct) || dmarcPct < 1 || dmarcPct > 100) {
+      problems.push(`DMARC_PCT "${dmarcPctRaw}" must be a whole number from 1 to 100.`);
+    }
+  }
+
+  const mtaSts = (env("MTA_STS") ?? "off").toLowerCase();
+  if (!["off", "testing", "enforce"].includes(mtaSts)) {
+    problems.push(`MTA_STS "${mtaSts}" must be one of: off, testing, enforce.`);
+  }
+
   const resendRegion = env("RESEND_REGION") ?? "us-east-1";
   if (!RESEND_REGIONS.includes(resendRegion as (typeof RESEND_REGIONS)[number])) {
     problems.push(
@@ -321,6 +394,11 @@ export function resolveConfig(): PostboxConfig {
     resendRegion,
     resendApiKey: resendApiKey ?? "",
     dmarcPolicy: dmarcPolicy as PostboxConfig["dmarcPolicy"],
+    dmarcRua,
+    dmarcPct,
+    tlsRptTo,
+    mtaSts: mtaSts as PostboxConfig["mtaSts"],
+    siteVerification: env("SITE_VERIFICATION"),
     workersDevUrl: (env("WORKERS_DEV_URL") ?? "false").toLowerCase() === "true",
     appPassword: env("APP_PASSWORD"),
     accountId: env("CLOUDFLARE_ACCOUNT_ID"),

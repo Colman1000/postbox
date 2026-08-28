@@ -47,6 +47,9 @@ export interface MailView {
   folder: Folder;
   label?: string;
   labelName?: string;
+  /** A sidebar mailbox: one address on the domain, across every folder. */
+  mailbox?: string;
+  mailboxName?: string;
   starred?: boolean;
 }
 
@@ -103,6 +106,31 @@ export function MailApp({ session }: { session: SessionInfo }) {
     history.replaceState(null, "", window.location.pathname);
   }, [session.defaultFrom]);
 
+  /**
+   * Opened from a push notification.
+   *
+   * Two routes in, because the service worker has to handle both cases: a cold
+   * launch arrives as `?thread=` on a new window, and a tap while the app is
+   * already running arrives as a message to the page that was focused. Both
+   * end at the same call, and both scrub the URL afterwards so a refresh does
+   * not reopen a conversation that was read an hour ago.
+   */
+  useEffect(() => {
+    const launched = new URLSearchParams(window.location.search).get("thread");
+    if (launched) {
+      openArrival(launched);
+      history.replaceState(null, "", window.location.pathname);
+    }
+
+    if (!("serviceWorker" in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; threadId?: string } | null;
+      if (data?.type === "open-thread" && data.threadId) openArrival(data.threadId);
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [openArrival]);
+
   // Debounce so every keystroke does not become an FTS query.
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(query.trim()), 220);
@@ -112,7 +140,7 @@ export function MailApp({ session }: { session: SessionInfo }) {
   const searching = debouncedQuery.length >= 2;
   const listQuery = useThreads(view);
   const searchQuery = useSearch(debouncedQuery);
-  const act = useThreadAction({ folder: view.folder, starred: view.starred });
+  const act = useThreadAction(view);
 
   const threads: Thread[] = useMemo(() => {
     if (searching) return searchQuery.data?.items ?? [];
@@ -288,9 +316,11 @@ export function MailApp({ session }: { session: SessionInfo }) {
     ? `Results for “${debouncedQuery}”`
     : view.starred
       ? "Starred"
-      : view.labelName
-        ? view.labelName
-        : view.folder[0].toUpperCase() + view.folder.slice(1);
+      : view.mailboxName
+        ? view.mailboxName
+        : view.labelName
+          ? view.labelName
+          : view.folder[0].toUpperCase() + view.folder.slice(1);
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">

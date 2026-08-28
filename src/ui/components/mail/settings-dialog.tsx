@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   AtSignIcon,
   BellIcon,
+  InboxIcon,
   CheckIcon,
   MonitorIcon,
   MoonIcon,
@@ -35,6 +36,8 @@ import {
   useEvents,
   useIdentities,
   useLabels,
+  useMailboxes,
+  useMailboxSuggestions,
   useStats,
   useTemplates,
 } from "@/lib/queries.ts";
@@ -53,8 +56,10 @@ import { Input } from "@/components/ui/input.tsx";
 import { Label } from "@/components/ui/label.tsx";
 import { Progress } from "@/components/ui/progress.tsx";
 import { Separator } from "@/components/ui/separator.tsx";
-import { Switch } from "@/components/ui/switch.tsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs.tsx";
+import { AppIconPicker } from "./app-icon-picker.tsx";
+import { PushSettings } from "./push-settings.tsx";
+import { Row } from "./setting-row.tsx";
 import { Textarea } from "@/components/ui/textarea.tsx";
 
 export function SettingsDialog({
@@ -85,10 +90,11 @@ export function SettingsDialog({
           defaultValue="identities"
           className="min-w-0 px-6 pb-6 max-md:px-4 max-md:pb-4"
         >
-          {/* Seven tabs do not fit a phone. Scrolling the strip keeps them all
+          {/* Eight tabs do not fit a phone. Scrolling the strip keeps them all
               reachable without the dialog itself growing sideways. */}
           <TabsList className="mb-4 max-w-full justify-start overflow-x-auto max-md:w-full">
             <TabsTrigger value="identities">Addresses</TabsTrigger>
+            <TabsTrigger value="mailboxes">Mailboxes</TabsTrigger>
             <TabsTrigger value="labels">Labels</TabsTrigger>
             <TabsTrigger value="templates">Templates</TabsTrigger>
             <TabsTrigger value="appearance">Appearance</TabsTrigger>
@@ -101,6 +107,9 @@ export function SettingsDialog({
             <TabsContent value="identities">
               <Identities session={session} />
             </TabsContent>
+            <TabsContent value="mailboxes">
+              <Mailboxes session={session} />
+            </TabsContent>
             <TabsContent value="labels">
               <Labels />
             </TabsContent>
@@ -108,10 +117,10 @@ export function SettingsDialog({
               <Templates />
             </TabsContent>
             <TabsContent value="appearance">
-              <Appearance />
+              <Appearance session={session} />
             </TabsContent>
             <TabsContent value="alerts">
-              <Alerts live={live} />
+              <Alerts live={live} session={session} />
             </TabsContent>
             <TabsContent value="access">
               <Access />
@@ -282,6 +291,167 @@ function Identities({ session }: { session: SessionInfo }) {
   );
 }
 
+// ── mailboxes ────────────────────────────────────────────────────────────────
+
+/**
+ * Give one address its own place in the sidebar.
+ *
+ * The form is deliberately the same shape as Addresses above — local part,
+ * your domain, an optional name — because it is the same act from the other
+ * direction: that one says which addresses you can write *as*, this one says
+ * which you want to read *apart*.
+ *
+ * Nothing is moved when a mailbox is made. The grouping is derived from the
+ * address each message arrived at, so a mailbox is complete the instant it
+ * exists and removing it costs nothing but the sidebar entry.
+ */
+function Mailboxes({ session }: { session: SessionInfo }) {
+  const client = useQueryClient();
+  const mailboxes = useMailboxes();
+  const suggestions = useMailboxSuggestions();
+  const [local, setLocal] = useState("");
+  const [name, setName] = useState("");
+
+  async function add(address: string, displayName?: string) {
+    try {
+      await api.createMailbox(address, displayName);
+      setLocal("");
+      setName("");
+      client.invalidateQueries({ queryKey: keys.mailboxes });
+      client.invalidateQueries({ queryKey: keys.mailboxSuggestions });
+      toast.success("Mailbox added");
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : "Could not add that mailbox");
+    }
+  }
+
+  // Only offer what is not already there — the list is refetched on add, but
+  // this keeps the row from lingering for the moment in between.
+  const taken = new Set(mailboxes.data?.map((m) => m.address) ?? []);
+  const unused = suggestions.data?.filter((s) => !taken.has(s.address)) ?? [];
+
+  return (
+    <div className="space-y-5">
+      <p className="text-muted-foreground text-[12px] leading-relaxed">
+        A mailbox groups everything sent to one address — <code>billing@</code>,{" "}
+        <code>support@</code> — under its own entry in the sidebar. Nothing moves: the mail still
+        arrives in your Inbox and is archived, starred and searched exactly as before. This is
+        only a second way in, so the busy address does not disappear into the pile.
+      </p>
+
+      <div className="flex items-end gap-2 max-sm:flex-col max-sm:items-stretch">
+        <div className="flex-1 space-y-1.5">
+          <Label htmlFor="mailbox-local" className="text-[12px]">
+            Address
+          </Label>
+          <div className="flex items-center">
+            <Input
+              id="mailbox-local"
+              value={local}
+              onChange={(e) => setLocal(e.target.value.replace(/[^a-z0-9._+-]/gi, ""))}
+              onKeyDown={(e) =>
+                e.key === "Enter" &&
+                local.trim() &&
+                add(`${local.trim()}@${session.domain}`, name.trim() || undefined)
+              }
+              placeholder="billing"
+              className="rounded-r-none"
+            />
+            <span className="border-input bg-muted text-muted-foreground flex h-9 items-center rounded-r-md border border-l-0 px-2 text-[13px]">
+              @{session.domain}
+            </span>
+          </div>
+        </div>
+        <div className="flex-1 space-y-1.5">
+          <Label htmlFor="mailbox-name" className="text-[12px]">
+            Shown as
+          </Label>
+          <Input
+            id="mailbox-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Optional"
+          />
+        </div>
+        <Button
+          onClick={() => add(`${local.trim()}@${session.domain}`, name.trim() || undefined)}
+          disabled={!local.trim()}
+        >
+          <PlusIcon /> Add
+        </Button>
+      </div>
+
+      {/*
+        The addresses that are already getting mail, offered rather than
+        remembered. "Which of my addresses actually receive anything" is a
+        question the database can answer, and asking the user to recall it
+        instead is how a feature ends up unused.
+      */}
+      {unused.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-muted-foreground text-[11px]">
+            Already receiving mail:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {unused.map((suggestion) => (
+              <button
+                key={suggestion.address}
+                type="button"
+                onClick={() => add(suggestion.address)}
+                className="hover:bg-accent hover:text-foreground text-muted-foreground flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] transition-colors"
+              >
+                <PlusIcon className="size-3" />
+                {suggestion.address}
+                <span className="tabular-nums opacity-60">{suggestion.count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Separator />
+
+      {(mailboxes.data?.length ?? 0) === 0 ? (
+        <p className="text-muted-foreground py-8 text-center text-[12px]">
+          No mailboxes yet. Add one above and it appears in the sidebar, already holding every
+          message that address has ever received.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {mailboxes.data?.map((mailbox) => (
+            <li key={mailbox.id} className="flex items-center gap-2 rounded-lg border px-3 py-2">
+              <InboxIcon className="text-muted-foreground size-3.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium">
+                  {mailbox.name || mailbox.address.split("@")[0]}
+                </p>
+                <p className="text-muted-foreground truncate text-[11px]">{mailbox.address}</p>
+              </div>
+              <span className="text-muted-foreground text-[11px] tabular-nums">
+                {mailbox.unread > 0 ? `${mailbox.unread} unread · ` : ""}
+                {mailbox.count}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
+                onClick={async () => {
+                  await api.deleteMailbox(mailbox.id);
+                  client.invalidateQueries({ queryKey: keys.mailboxes });
+                  client.invalidateQueries({ queryKey: keys.mailboxSuggestions });
+                }}
+                aria-label={`Remove ${mailbox.address}`}
+              >
+                <Trash2Icon />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 // ── labels ───────────────────────────────────────────────────────────────────
 
 function Labels() {
@@ -432,7 +602,7 @@ const MONOCHROME_SWATCH = "linear-gradient(135deg, oklch(0.97 0 0) 50%, oklch(0.
  * mailbox's, and is saved with it, because a colour that only one laptop knows
  * about is not a brand.
  */
-function Appearance() {
+function Appearance({ session }: { session: SessionInfo }) {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const { brand, preview, choose } = useBrand();
 
@@ -556,6 +726,12 @@ function Appearance() {
         </div>
       </section>
 
+      <Separator />
+
+      <AppIconPicker domain={session.domain} />
+
+      <Separator />
+
       <div className="space-y-3 rounded-lg border p-3">
         <p className="text-muted-foreground text-[10px] tracking-wider uppercase">
           Preview
@@ -617,7 +793,7 @@ function Swatch({
  * is granted per-origin per-device by the browser itself, and whether a sound
  * is welcome depends on the room you are in, not on the mailbox.
  */
-function Alerts({ live }: { live: LiveStatus }) {
+function Alerts({ live, session }: { live: LiveStatus; session: SessionInfo }) {
   const [prefs, setPrefs] = useState<NotifyPrefs>(() => readPrefs());
   const [granted, setGranted] = useState<NotificationPermission>(() =>
     notificationPermission(),
@@ -671,6 +847,10 @@ function Alerts({ live }: { live: LiveStatus }) {
           something arrived.
         </p>
       </div>
+
+      <PushSettings vapidKey={session.vapidKey} />
+
+      <Separator />
 
       <Row
         icon={<BellIcon className="size-4" />}
@@ -750,35 +930,6 @@ function Alerts({ live }: { live: LiveStatus }) {
       >
         Preview an alert
       </Button>
-    </div>
-  );
-}
-
-function Row({
-  icon,
-  title,
-  description,
-  checked,
-  disabled,
-  onChange,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  checked: boolean;
-  disabled: boolean;
-  onChange: (value: boolean) => void;
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-lg border p-3">
-      <span className="text-muted-foreground mt-0.5">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium">{title}</p>
-        <p className="text-muted-foreground mt-0.5 text-[12px] leading-relaxed">
-          {description}
-        </p>
-      </div>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onChange} />
     </div>
   );
 }

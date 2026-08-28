@@ -316,6 +316,33 @@ export async function recomputeThread(
 }
 
 /** Labels for a batch of threads, in one query instead of N. */
+/**
+ * Unread inbound mail sitting in the inbox, right now.
+ *
+ * One definition, three callers: the tab title, the home-screen badge and the
+ * count a push notification carries. They were always meant to agree, and the
+ * only way to guarantee that is for them to ask the same question — a badge
+ * that says two over an inbox showing three is worse than no badge.
+ *
+ * Snoozed conversations are excluded, exactly as every list and count in the
+ * app excludes them: mail you have deliberately put off is not mail you are
+ * waiting on.
+ */
+export async function unreadCount(db: D1Database, now = Date.now()): Promise<number> {
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n
+         FROM messages
+        WHERE folder = 'inbox'
+          AND direction = 'inbound'
+          AND is_read = 0
+          AND (snoozed_until IS NULL OR snoozed_until <= ?)`,
+    )
+    .bind(now)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 export async function labelsForThreads(
   db: D1Database,
   threadIds: string[],
@@ -387,6 +414,43 @@ export function indexMessage(
         message.body.slice(0, 100_000),
         message.participants,
       ),
+  ];
+}
+
+/**
+ * Records which of our own addresses a message touched.
+ *
+ * Mailboxes are derived from this table rather than stored against it, which
+ * is the whole reason it exists: naming `billing@` in Settings shows every
+ * message it has ever received, immediately, because the membership was
+ * written when each message arrived rather than when the mailbox was defined.
+ *
+ * Written the same way as the search index — delete then insert, folded into
+ * the caller's batch — so re-saving a draft that changed its From address
+ * leaves one row rather than two.
+ */
+export function indexAddresses(
+  db: D1Database,
+  message: { id: string; threadId: string; addresses: (string | null | undefined)[] },
+): D1PreparedStatement[] {
+  const unique = [
+    ...new Set(
+      message.addresses
+        .map((address) => address?.trim().toLowerCase())
+        .filter((address): address is string => Boolean(address)),
+    ),
+  ];
+
+  return [
+    db.prepare("DELETE FROM message_addresses WHERE message_id = ?").bind(message.id),
+    ...unique.map((address) =>
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO message_addresses (message_id, thread_id, address)
+           VALUES (?, ?, ?)`,
+        )
+        .bind(message.id, message.threadId, address),
+    ),
   ];
 }
 

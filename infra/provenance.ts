@@ -207,6 +207,13 @@ export async function foreignRecordExists(
   return Boolean(live) && !(live.comment ?? "").includes(POSTBOX_MARK);
 }
 
+/** Record types where one name may hold several distinct values. */
+const MULTI_VALUED = new Set(["TXT", "MX", "NS", "SRV", "CAA"]);
+
+/** Cloudflare returns TXT content quoted about half the time. */
+const normalise = (content: string | undefined) =>
+  (content ?? "").trim().replace(/^"|"$/g, "");
+
 export interface WantedRecord {
   type: string;
   name: string;
@@ -232,12 +239,22 @@ export async function classifyRecords<T extends WantedRecord>(
   const adopted: T[] = [];
 
   for (const record of wanted) {
-    const matches = await json<{ comment?: string | null }[]>(
+    const matches = await json<{ comment?: string | null; content?: string }[]>(
       api,
       `/zones/${zoneId}/dns_records?type=${encodeURIComponent(record.type)}&name=${encodeURIComponent(record.name)}`,
     );
 
-    const live = (matches ?? [])[0];
+    // A name may legitimately hold several records of the same type — an apex
+    // TXT carries SPF and every domain-verification token anyone has ever
+    // added. Taking the first match would judge our record by a stranger's
+    // comment and file it as adopted, so it would be created and then never
+    // cleaned up. Match on content for the multi-valued types, which is also
+    // exactly how the DNS resource itself identifies them.
+    const multiValued = MULTI_VALUED.has(record.type.toUpperCase());
+    const live = multiValued
+      ? (matches ?? []).find((m) => normalise(m.content) === normalise(record.content))
+      : (matches ?? [])[0];
+
     // No record yet, or one we wrote ourselves: ours to manage and to remove.
     if (!live || (live.comment ?? "").includes(POSTBOX_MARK)) ours.push(record);
     else adopted.push(record);

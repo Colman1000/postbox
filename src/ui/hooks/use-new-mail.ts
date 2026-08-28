@@ -79,6 +79,9 @@ export function useNewMail({ onOpenThread }: { onOpenThread: (threadId: string) 
     // The lists, the unread badges and the counts all just became wrong.
     client.invalidateQueries({ queryKey: ["threads"] });
     client.invalidateQueries({ queryKey: keys.stats });
+    // Mail that just arrived is mail that just landed in a mailbox — the
+    // sidebar's whole promise is that `billing@` lights up when billing writes.
+    client.invalidateQueries({ queryKey: keys.mailboxes });
 
     const prefs = readPrefs();
     if (prefs.sound) playChime();

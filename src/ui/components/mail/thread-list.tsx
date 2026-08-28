@@ -305,6 +305,7 @@ export function ThreadList({
         ) : threads.length === 0 ? (
           <EmptyState
             folder={view.folder}
+            mailboxName={view.mailbox ? (view.mailboxName ?? "this mailbox") : undefined}
             searching={query.trim().length >= 2}
             onCompose={onCompose}
             onShowShortcuts={onShowShortcuts}

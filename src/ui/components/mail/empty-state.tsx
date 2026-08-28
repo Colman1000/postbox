@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  AtSignIcon,
   ClockIcon,
   FileTextIcon,
   InboxIcon,
@@ -57,11 +58,14 @@ const COPY: Record<Folder, { icon: typeof InboxIcon; title: string; body: string
 
 export function EmptyState({
   folder,
+  mailboxName,
   searching,
   onCompose,
   onShowShortcuts,
 }: {
   folder: Folder;
+  /** Set when the empty list is a mailbox rather than a folder. */
+  mailboxName?: string;
   searching: boolean;
   onCompose?: () => void;
   onShowShortcuts?: () => void;
@@ -70,6 +74,17 @@ export function EmptyState({
     return (
       <Frame icon={<SearchXIcon />} title="No matches">
         Try fewer words, or search for an address instead of a name.
+      </Frame>
+    );
+  }
+
+  // A mailbox is empty for one specific reason, and saying which one is the
+  // difference between "this works, nothing has come yet" and "did I set this
+  // up wrong?" — the likelier worry for something you defined a minute ago.
+  if (mailboxName) {
+    return (
+      <Frame icon={<AtSignIcon />} title={`Nothing for ${mailboxName} yet`}>
+        Mail sent to this address will gather here as it arrives — and stay in your Inbox too.
       </Frame>
     );
   }

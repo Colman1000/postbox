@@ -37,6 +37,8 @@ export interface SummaryInput {
   forwardVerified: boolean;
   dnsRecordCount: number;
   vaultRead: VaultData;
+  /** Hostname serving the MTA-STS policy, when MTA_STS is not "off". */
+  mtaStsHostname?: string;
 }
 
 export async function printSummary(input: SummaryInput): Promise<void> {
@@ -84,6 +86,39 @@ export async function printSummary(input: SummaryInput): Promise<void> {
     );
   }
 
+  // Deliverability is the difference between "it sent" and "they read it",
+  // and it is the part that is invisible unless something says it out loud.
+  out.push("", paint(c.bold, "  Deliverability"));
+  out.push(
+    line(
+      "DMARC",
+      config.dmarcPolicy === "none"
+        ? `${paint(c.yellow, "p=none")} ${paint(c.dim, "— monitoring only; nothing is enforced yet")}`
+        : `${paint(c.green, `p=${config.dmarcPolicy}`)}${
+            config.dmarcPct !== undefined ? paint(c.dim, ` on ${config.dmarcPct}% of failures`) : ""
+          }`,
+    ),
+    line(
+      "Reports",
+      config.dmarcRua
+        ? `${paint(c.green, "on")} ${paint(c.dim, `→ ${config.dmarcRua.replace(/^mailto:/, "")}`)}`
+        : `${paint(c.yellow, "off")} ${paint(c.dim, "— set DMARC_RUA to find out who is sending as you")}`,
+    ),
+  );
+  if (config.tlsRptTo) {
+    out.push(line("TLS reports", paint(c.dim, `→ ${config.tlsRptTo.replace(/^mailto:/, "")}`)));
+  }
+  if (input.mtaStsHostname) {
+    out.push(
+      line(
+        "MTA-STS",
+        `${config.mtaSts === "enforce" ? paint(c.green, "enforce") : paint(c.yellow, "testing")} ` +
+          paint(c.dim, `— https://${input.mtaStsHostname}/.well-known/mta-sts.txt`),
+      ),
+    );
+  }
+  out.push(paint(c.dim, "  " + " ".repeat(14) + " just mailcheck  full DNS and authentication report"));
+
   out.push("", paint(c.bold, "  Sign in"));
 
   if (input.passwordWasGenerated) {
@@ -100,6 +135,19 @@ export async function printSummary(input: SummaryInput): Promise<void> {
       line("Password", paint(c.dim, `stored in ${vaultPath(config.stage)}`)),
     );
   }
+
+  // The phone story, which is otherwise undiscoverable: nothing in the UI
+  // says "install me", because the browser only offers that once you have
+  // visited, and iOS never offers it at all.
+  out.push(
+    "",
+    paint(c.bold, "  On your phone"),
+    line(
+      "Install",
+      paint(c.dim, `open https://${input.appHostname} → Share → Add to Home Screen`),
+    ),
+    line("Notifications", paint(c.dim, "Settings → Alerts, from the installed app")),
+  );
 
   // Anything that still needs a human, stated as an instruction.
   const todo: string[] = [];

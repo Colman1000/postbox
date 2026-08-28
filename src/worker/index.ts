@@ -7,7 +7,9 @@ import { runScheduledWork } from "./lib/cron.ts";
 import { Mailbox } from "./mailbox.ts";
 import { auth } from "./routes/auth.ts";
 import { compose } from "./routes/compose.ts";
+import { icon, iconAdmin } from "./routes/icon.ts";
 import { mail } from "./routes/mail.ts";
+import { push } from "./routes/push.ts";
 import { workspace } from "./routes/workspace.ts";
 
 /**
@@ -76,9 +78,23 @@ app.use("/api/*", async (c, next) => {
 app.get("/api/health", (c) => c.json({ ok: true, stage: c.env.STAGE }));
 
 app.route("/api/auth", auth);
+app.route("/api/push", push);
 app.route("/api", mail);
 app.route("/api", compose);
 app.route("/api", workspace);
+app.route("/api", iconAdmin);
+
+/**
+ * The home-screen identity, outside the API and outside its session gate.
+ *
+ * A manifest is fetched without credentials and an icon is fetched by the
+ * operating system, so neither can live behind the cookie. They are mounted at
+ * the root rather than under `/api` because iOS goes looking for
+ * `/apple-touch-icon.png` by name — see routes/icon.ts, and the
+ * `run_worker_first` list in alchemy.run.ts that lets these paths reach the
+ * Worker at all.
+ */
+app.route("/", icon);
 
 app.notFound((c) =>
   c.req.path.startsWith("/api/")

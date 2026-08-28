@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ArchiveIcon,
+  AtSignIcon,
   ClockIcon,
   FileTextIcon,
   InboxIcon,
@@ -14,7 +15,7 @@ import {
   StarIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useSearch } from "@/lib/queries.ts";
+import { useMailboxes, useSearch } from "@/lib/queries.ts";
 import { participantSummary, shortDate } from "@/lib/format.ts";
 import type { MailView } from "./mail-app.tsx";
 import {
@@ -66,6 +67,7 @@ export function CommandPalette({
   }, [open]);
 
   const results = useSearch(debounced);
+  const mailboxes = useMailboxes();
 
   function run(action: () => void) {
     onOpenChange(false);
@@ -120,6 +122,31 @@ export function CommandPalette({
             <CircleQuestionMarkIcon /> Help
           </CommandItem>
         </CommandGroup>
+
+        {(mailboxes.data?.length ?? 0) > 0 && (
+          <CommandGroup heading="Mailboxes">
+            {mailboxes.data?.map((mailbox) => (
+              <CommandItem
+                key={mailbox.id}
+                value={`mailbox ${mailbox.name ?? ""} ${mailbox.address}`}
+                onSelect={() =>
+                  run(() =>
+                    onNavigate({
+                      folder: "inbox",
+                      mailbox: mailbox.id,
+                      mailboxName: mailbox.name || mailbox.address,
+                    }),
+                  )
+                }
+              >
+                <AtSignIcon /> {mailbox.name || mailbox.address.split("@")[0]}
+                <CommandShortcut>
+                  {mailbox.unread > 0 ? `${mailbox.unread} unread` : mailbox.address}
+                </CommandShortcut>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
 
         <CommandGroup heading="Go to">
           <CommandItem onSelect={() => run(() => onNavigate({ folder: "inbox" }))}>

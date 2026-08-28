@@ -52,6 +52,7 @@ export const cloudflareProvider: MailProvider = {
     }
 
     const headers: Record<string, string> = {};
+    if (request.messageId) headers["Message-ID"] = request.messageId;
     if (request.inReplyTo) headers["In-Reply-To"] = request.inReplyTo;
     if (request.references) headers["References"] = request.references;
 

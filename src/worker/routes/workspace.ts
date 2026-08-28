@@ -6,6 +6,8 @@ import type {
   Folder,
   Identity,
   Label,
+  Mailbox,
+  MailboxSuggestion,
   Paginated,
   Stats,
   Template,
@@ -74,6 +76,170 @@ workspace.post("/labels", async (c) => {
 
 workspace.delete("/labels/:id", async (c) => {
   await c.env.DB.prepare("DELETE FROM labels WHERE id = ?").bind(c.req.param("id")).run();
+  return c.json({ ok: true });
+});
+
+// ── mailboxes ───────────────────────────────────────────────────────────────
+
+/**
+ * The addresses that have their own entry in the sidebar.
+ *
+ * Both counts are what clicking through actually lists — conversations that
+ * reached the address and still exist outside Trash, minus anything snoozed —
+ * because a badge no list can account for is worse than no badge.
+ */
+workspace.get("/mailboxes", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT mb.id, mb.address, mb.name,
+            (SELECT COUNT(DISTINCT ma.thread_id)
+               FROM message_addresses ma
+               JOIN threads t ON t.id = ma.thread_id
+              WHERE ma.address = mb.address
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?1)
+                AND EXISTS (SELECT 1 FROM messages m
+                             WHERE m.thread_id = t.id AND m.folder != 'trash')
+            ) AS count,
+            (SELECT COUNT(DISTINCT ma.thread_id)
+               FROM message_addresses ma
+               JOIN threads t ON t.id = ma.thread_id
+              WHERE ma.address = mb.address
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?1)
+                AND EXISTS (SELECT 1 FROM messages m
+                             WHERE m.thread_id = t.id AND m.folder != 'trash'
+                               AND m.is_read = 0 AND m.direction = 'inbound')
+            ) AS unread
+       FROM mailboxes mb
+      ORDER BY mb.address COLLATE NOCASE`,
+  )
+    .bind(Date.now())
+    .all<{
+      id: string;
+      address: string;
+      name: string | null;
+      count: number;
+      unread: number;
+    }>();
+
+  return c.json(
+    (results ?? []).map(
+      (row): Mailbox => ({
+        id: row.id,
+        address: row.address,
+        name: row.name,
+        count: row.count,
+        unread: row.unread,
+      }),
+    ),
+  );
+});
+
+/**
+ * Addresses already receiving mail that have no mailbox yet.
+ *
+ * The useful question is not "what would you like to call a mailbox" but
+ * "which of my addresses actually get mail" — and the answer is already in the
+ * database. Restricted to our own domain, since only those reach here at all,
+ * and ordered by volume so the busiest address is the first one offered.
+ */
+workspace.get("/mailboxes/suggestions", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT ma.address AS address, COUNT(DISTINCT ma.thread_id) AS count
+       FROM message_addresses ma
+       JOIN messages m ON m.id = ma.message_id AND m.direction = 'inbound'
+      WHERE ma.address LIKE ?1
+        AND ma.address NOT IN (SELECT address FROM mailboxes)
+      GROUP BY ma.address
+      ORDER BY count DESC, ma.address
+      LIMIT 8`,
+  )
+    .bind(`%@${c.env.MAIL_DOMAIN}`)
+    .all<{ address: string; count: number }>();
+
+  return c.json(
+    (results ?? []).map((row): MailboxSuggestion => ({ address: row.address, count: row.count })),
+  );
+});
+
+/**
+ * Define a mailbox, or rename one.
+ *
+ * Keyed on the address rather than the id, so adding `billing@` twice renames
+ * the entry that is already there instead of splitting its mail across two.
+ * Nothing is copied or moved on creation: membership is derived from what each
+ * message recorded on arrival, so a mailbox named today already holds every
+ * message that address has ever received.
+ */
+workspace.post("/mailboxes", async (c) => {
+  const body = await c.req.json<{ address?: string; name?: string }>();
+  const address = (body.address ?? "").trim().toLowerCase();
+
+  if (!isValidAddress(address)) return c.json({ error: "Not a valid email address" }, 400);
+  if (!address.endsWith(`@${c.env.MAIL_DOMAIN}`)) {
+    return c.json(
+      {
+        error: `Mailboxes must be on @${c.env.MAIL_DOMAIN}.`,
+        hint: "Only addresses on your own domain reach this inbox, so only those can be grouped.",
+      },
+      400,
+    );
+  }
+
+  const name = (body.name ?? "").trim().slice(0, 40) || null;
+  const id = shortId();
+
+  await c.env.DB.prepare(
+    `INSERT INTO mailboxes (id, address, name, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT (address) DO UPDATE SET name = excluded.name`,
+  )
+    .bind(id, address, name, Date.now())
+    .run();
+
+  // Read back with its counts rather than answering zeroes: a mailbox is
+  // complete the moment it exists, and the response that creates one should
+  // say how much it already holds.
+  const row = await c.env.DB.prepare(
+    `SELECT mb.id,
+            (SELECT COUNT(DISTINCT ma.thread_id)
+               FROM message_addresses ma
+               JOIN threads t ON t.id = ma.thread_id
+              WHERE ma.address = mb.address
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?2)
+                AND EXISTS (SELECT 1 FROM messages m
+                             WHERE m.thread_id = t.id AND m.folder != 'trash')
+            ) AS count,
+            (SELECT COUNT(DISTINCT ma.thread_id)
+               FROM message_addresses ma
+               JOIN threads t ON t.id = ma.thread_id
+              WHERE ma.address = mb.address
+                AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?2)
+                AND EXISTS (SELECT 1 FROM messages m
+                             WHERE m.thread_id = t.id AND m.folder != 'trash'
+                               AND m.is_read = 0 AND m.direction = 'inbound')
+            ) AS unread
+       FROM mailboxes mb
+      WHERE mb.address = ?1`,
+  )
+    .bind(address, Date.now())
+    .first<{ id: string; count: number; unread: number }>();
+
+  c.set("auditDetail", `mailbox ${address}`);
+  return c.json({
+    id: row?.id ?? id,
+    address,
+    name,
+    count: row?.count ?? 0,
+    unread: row?.unread ?? 0,
+  } satisfies Mailbox);
+});
+
+/**
+ * Undefine one.
+ *
+ * Only the sidebar entry goes. Not one message moves, because none was ever
+ * moved to put it here — which is what makes trying a mailbox out free.
+ */
+workspace.delete("/mailboxes/:id", async (c) => {
+  await c.env.DB.prepare("DELETE FROM mailboxes WHERE id = ?").bind(c.req.param("id")).run();
   return c.json({ ok: true });
 });
 

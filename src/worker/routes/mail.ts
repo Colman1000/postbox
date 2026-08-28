@@ -14,6 +14,7 @@ import {
   recomputeThread,
   rowToMessage,
   rowToThread,
+  unreadCount,
   type MessageRow,
   type ThreadRow,
 } from "../lib/db.ts";
@@ -47,20 +48,33 @@ mail.get("/threads", async (c) => {
   const folder = (c.req.query("folder") ?? "inbox") as Folder;
   const starredOnly = c.req.query("starred") === "1";
   const labelId = c.req.query("label");
+  const mailboxId = c.req.query("mailbox");
   const cursor = c.req.query("cursor");
   const limit = Math.min(Number(c.req.query("limit") ?? PAGE_SIZE), 100);
 
-  if (!starredOnly && !labelId && !VALID_FOLDERS.includes(folder)) {
+  if (!starredOnly && !labelId && !mailboxId && !VALID_FOLDERS.includes(folder)) {
     return c.json({ error: `Unknown folder "${folder}"` }, 400);
+  }
+
+  // A mailbox is named by id so renaming one does not break an open view; the
+  // listing itself matches on the address, which is what messages carry.
+  let mailboxAddress: string | null = null;
+  if (mailboxId) {
+    const row = await c.env.DB.prepare("SELECT address FROM mailboxes WHERE id = ?")
+      .bind(mailboxId)
+      .first<{ address: string }>();
+    if (!row) return c.json({ error: "That mailbox no longer exists." }, 404);
+    mailboxAddress = row.address;
   }
 
   const where: string[] = [];
   const binds: unknown[] = [];
 
-  // Starred and labels are filters rather than folders: a conversation keeps
-  // its star and its labels wherever it is filed, so both span the mailbox and
-  // leave out only Trash. Everything else is one folder at a time.
-  const spansFolders = starredOnly || Boolean(labelId);
+  // Starred, labels and mailboxes are filters rather than folders: a
+  // conversation keeps its star, its labels and the address it arrived at
+  // wherever it is filed, so all three span the mailbox and leave out only
+  // Trash. Everything else is one folder at a time.
+  const spansFolders = starredOnly || Boolean(labelId) || Boolean(mailboxAddress);
 
   let from = spansFolders
     ? `
@@ -88,6 +102,13 @@ mail.get("/threads", async (c) => {
   if (labelId) {
     from += "\n    JOIN thread_labels tl ON tl.thread_id = t.id AND tl.label_id = ?";
     binds.push(labelId);
+  }
+
+  // A semi-join rather than another JOIN: a conversation that reached this
+  // address in five separate messages is still one row in the list.
+  if (mailboxAddress) {
+    where.push("t.id IN (SELECT thread_id FROM message_addresses WHERE address = ?)");
+    binds.push(mailboxAddress);
   }
 
   // Snoozed conversations hide until their wake time.
@@ -156,20 +177,9 @@ mail.get("/updates", async (c) => {
   const now = Date.now();
   const since = Number(c.req.query("since") ?? 0);
 
-  const unreadRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n
-       FROM messages
-      WHERE folder = 'inbox'
-        AND direction = 'inbound'
-        AND is_read = 0
-        AND (snoozed_until IS NULL OR snoozed_until <= ?)`,
-  )
-    .bind(now)
-    .first<{ n: number }>();
-
   const update: MailUpdate = {
     now,
-    unread: unreadRow?.n ?? 0,
+    unread: await unreadCount(c.env.DB, now),
     arrivals: [],
   };
 
@@ -457,6 +467,9 @@ mail.post("/threads/actions", async (c) => {
         ).bind(...ids),
         c.env.DB.prepare(
           `DELETE FROM messages_fts WHERE thread_id IN (${placeholders})`,
+        ).bind(...ids),
+        c.env.DB.prepare(
+          `DELETE FROM message_addresses WHERE thread_id IN (${placeholders})`,
         ).bind(...ids),
         c.env.DB.prepare(`DELETE FROM messages WHERE thread_id IN (${placeholders})`).bind(
           ...ids,

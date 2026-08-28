@@ -29,6 +29,15 @@ export interface SendRequest {
   html: string;
   /** Plain-text alternative. Never omitted — some clients only show this. */
   text: string;
+  /**
+   * RFC 5322 Message-ID, angle brackets included.
+   *
+   * Set explicitly rather than left to the provider, because Postbox stores
+   * this id as the anchor every future reply threads against. A provider's own
+   * id is rooted at the provider's domain and is never told to us, so a
+   * message sent without this one is unthreadable the moment somebody replies.
+   */
+  messageId?: string | null;
   inReplyTo?: string | null;
   references?: string | null;
   attachments?: OutboundAttachment[];

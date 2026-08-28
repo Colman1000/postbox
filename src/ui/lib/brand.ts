@@ -13,6 +13,8 @@
  * round-trip late is a flash of the wrong one.
  */
 
+import { normalizeHex } from "@shared/colour.ts";
+
 const STORAGE_KEY = "postbox:brand";
 
 export interface BrandPreset {
@@ -35,17 +37,12 @@ export const BRAND_PRESETS: BrandPreset[] = [
 /**
  * `#rrggbb`, lowercased — or null for anything else.
  *
- * This value is written into a CSS custom property and it arrives from the
- * database, so "looks like a colour" is not good enough: only the two hex
- * forms get through.
+ * Defined in `@shared` because the Worker validates the same value on its way
+ * into the manifest's `theme_color`, and two copies of a validator is one copy
+ * too many. Re-exported here so this stays the one place the UI imports
+ * anything about the brand colour from.
  */
-export function normalizeHex(input: unknown): string | null {
-  if (typeof input !== "string") return null;
-  const value = input.trim().toLowerCase();
-  const short = /^#([0-9a-f]{3})$/.exec(value);
-  if (short) return `#${[...short[1]].map((digit) => digit + digit).join("")}`;
-  return /^#[0-9a-f]{6}$/.test(value) ? value : null;
-}
+export { normalizeHex } from "@shared/colour.ts";
 
 export function readBrand(): string | null {
   try {

@@ -5,6 +5,8 @@ import { resendProvider } from "./resend.ts";
 import { SendError, type MailProvider, type SendRequest } from "./types.ts";
 
 export { renderBody } from "./render.ts";
+export { toPlainText, stripTags } from "./plaintext.ts";
+export { checkDeliverability } from "./deliverability.ts";
 export { readQuota } from "./quota.ts";
 export { SendError };
 export type { MailProvider, SendRequest, OutboundAttachment } from "./types.ts";

@@ -115,6 +115,12 @@ export function HelpDialog({
               Both live in the conversation toolbar. Labels appear in the sidebar with a count, and
               follow a conversation wherever you file it.
             </Point>
+            <Point term="Mailboxes">
+              Every address on your domain lands in the same inbox. Name one in Settings →
+              Mailboxes and it gets its own entry in the sidebar, holding everything that address
+              has ever received. Nothing moves: the mail is still in your Inbox, and removing a
+              mailbox removes only the entry.
+            </Point>
           </Topic>
 
           <Topic title="Finding things" gist="Search, and the command palette">
@@ -131,8 +137,8 @@ export function HelpDialog({
 
           <Topic title="Settings" gist="Addresses, signatures, templates, alerts">
             <Point term="Make it yours">
-              Name the addresses you send from and give each a signature, and keep labels and
-              reusable templates.
+              Name the addresses you send from and give each a signature, group the ones you want
+              read apart into mailboxes, and keep labels and reusable templates.
             </Point>
             <Point term="Alerts are per device">
               Desktop notifications and the new-mail chime need this browser's permission, and

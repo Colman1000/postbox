@@ -9,25 +9,12 @@
  * If you would rather use SSO, put Cloudflare Access in front of the hostname;
  * this layer stays harmless underneath it.
  */
+import { base64url, fromBase64url } from "./base64.ts";
+
 const COOKIE_NAME = "postbox_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
 const encoder = new TextEncoder();
-
-function base64url(bytes: ArrayBuffer | Uint8Array): string {
-  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  let binary = "";
-  for (const byte of view) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/");
-  const binary = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
-  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
 
 async function key(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(

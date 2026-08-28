@@ -103,6 +103,10 @@ doctor: _preflight
 verify: _preflight
     @node infra/verify.ts
 
+# Check every record a receiving mail server looks at, and what it concludes.
+mailcheck: _preflight
+    @node infra/deliverability.ts
+
 # Print where machine-local secrets are kept, and the UI password.
 secrets: _preflight
     @node infra/secrets.ts
@@ -117,6 +121,10 @@ sql query: _install
 tail-mail: _install
     @{{names}} && {{wrangler}} d1 execute "$POSTBOX_DB" --remote --command \
       "select datetime(created_at/1000,'unixepoch') as at, type, detail from events order by created_at desc limit 25"
+
+# Redraw the default app icon from scripts/make-icons.mjs into public/icons/.
+icons:
+    @node scripts/make-icons.mjs
 
 # Remove build output and local caches. Leaves .secrets and .env alone.
 clean:

@@ -1,8 +1,14 @@
 import { Hono } from "hono";
-import type { Address, DraftInput, SendResult } from "../../shared/types.ts";
+import type {
+  Address,
+  DeliverabilityFinding,
+  DraftInput,
+  SendResult,
+} from "../../shared/types.ts";
 import { dedupe, isValidAddress, parseAddressList } from "../lib/addresses.ts";
 import { toArrayBuffer } from "../lib/blob.ts";
 import {
+  indexAddresses,
   indexMessage,
   logEvent,
   makeSnippet,
@@ -14,7 +20,7 @@ import {
   type MessageRow,
 } from "../lib/db.ts";
 import { rfcMessageId, ulid } from "../lib/ids.ts";
-import { SendError, renderBody, send } from "../lib/mail/index.ts";
+import { SendError, checkDeliverability, renderBody, send } from "../lib/mail/index.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/types.ts";
 import type { App } from "./context.ts";
 
@@ -121,8 +127,8 @@ export async function saveDraft(
 
   // Index drafts as well as sent mail — "where was that half-written reply"
   // is exactly the kind of thing search should answer.
-  await env.DB.batch(
-    indexMessage(env.DB, {
+  await env.DB.batch([
+    ...indexMessage(env.DB, {
       id,
       threadId,
       subject,
@@ -131,7 +137,11 @@ export async function saveDraft(
         .map((a) => (typeof a === "string" ? a : a.address))
         .join(" "),
     }),
-  );
+    // The address this goes out as, so a conversation you *start* from
+    // `billing@` is in the Billing mailbox before anyone has replied — a
+    // mailbox that only ever fills from the outside is half a mailbox.
+    ...indexAddresses(env.DB, { id, threadId, addresses: [from] }),
+  ]);
 
   const summary = await recomputeThread(env.DB, threadId);
   if (summary) await summary.run();
@@ -201,6 +211,7 @@ compose.delete("/drafts/:id", async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare("DELETE FROM attachments WHERE message_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM messages_fts WHERE message_id = ?").bind(id),
+    c.env.DB.prepare("DELETE FROM message_addresses WHERE message_id = ?").bind(id),
     c.env.DB.prepare("DELETE FROM messages WHERE id = ?").bind(id),
   ]);
 
@@ -274,6 +285,43 @@ compose.delete("/attachments/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+// ── deliverability ──────────────────────────────────────────────────────────
+
+/**
+ * What a receiving filter is about to notice about this draft.
+ *
+ * Called by the composer as you type, so the answer arrives while the message
+ * can still be changed. Advisory in both directions: it never blocks a send,
+ * and a clean result is not a promise of an inbox — most of deliverability is
+ * the reputation of the domain and the sending pool, neither of which any
+ * single message can move.
+ */
+compose.post("/deliverability/check", async (c) => {
+  const body = await c.req.json<DraftInput>();
+  const attachments = body.id
+    ? ((
+        await c.env.DB.prepare(
+          "SELECT filename, size FROM attachments WHERE message_id = ?",
+        )
+          .bind(body.id)
+          .all<{ filename: string; size: number }>()
+      ).results ?? [])
+    : [];
+
+  return c.json({
+    findings: checkDeliverability({
+      from: (body.from ?? c.env.DEFAULT_FROM).toLowerCase(),
+      to: normalizeRecipients(body.to),
+      cc: normalizeRecipients(body.cc),
+      bcc: normalizeRecipients(body.bcc),
+      subject: body.subject ?? "",
+      body: body.body ?? "",
+      attachments,
+      isReply: Boolean(body.inReplyTo),
+    }),
+  });
+});
+
 // ── sending ─────────────────────────────────────────────────────────────────
 
 interface SendBody extends DraftInput {
@@ -309,6 +357,27 @@ compose.post("/send", async (c) => {
   const saved = await saveDraft(c.env, { ...body, from, to, cc, bcc });
   const { id: messageId, threadId } = saved;
 
+  // Advisory, and deliberately after the save: the check reports, it does not
+  // veto. Returned with the result so the composer can say what a receiver is
+  // likely to have noticed, even when the send itself succeeded.
+  const warnings: DeliverabilityFinding[] = checkDeliverability({
+    from,
+    to,
+    cc,
+    bcc,
+    subject: body.subject ?? "",
+    body: body.body ?? "",
+    attachments:
+      (
+        await c.env.DB.prepare(
+          "SELECT filename, size FROM attachments WHERE message_id = ?",
+        )
+          .bind(messageId)
+          .all<{ filename: string; size: number }>()
+      ).results ?? [],
+    isReply: Boolean(body.inReplyTo),
+  }).filter((finding) => finding.level === "warn");
+
   // Scheduled: park it and let the cron pick it up.
   if (body.scheduledAt && body.scheduledAt > now + 30_000) {
     await c.env.DB.batch([
@@ -329,7 +398,12 @@ compose.post("/send", async (c) => {
       "auditDetail",
       `scheduled a message to ${to.length} recipient(s) for ${new Date(body.scheduledAt).toISOString()}`,
     );
-    const result: SendResult = { messageId, threadId, scheduledAt: body.scheduledAt };
+    const result: SendResult = {
+      messageId,
+      threadId,
+      scheduledAt: body.scheduledAt,
+      warnings: warnings.length > 0 ? warnings : undefined,
+    };
     return c.json(result);
   }
 
@@ -346,6 +420,7 @@ compose.post("/send", async (c) => {
     messageId,
     threadId,
     providerId: outcome.providerId,
+    warnings: warnings.length > 0 ? warnings : undefined,
   };
   return c.json(result);
 });
@@ -439,6 +514,7 @@ export async function deliver(
       subject: row.subject,
       html,
       text,
+      messageId: generatedId,
       inReplyTo,
       references,
       attachments: (attachmentRows ?? []).map((a) => ({

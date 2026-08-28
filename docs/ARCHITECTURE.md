@@ -44,6 +44,32 @@ Three details keep it inside the free plan, and all three are load-bearing:
 
 The same reasoning rules out server-sent events, which would otherwise be simpler: an SSE stream has to be held by something, there is no hibernation for it, and holding it awake is the 11,000 GB-s case above.
 
+## Push, and why the app is installable
+
+The live channel above reaches a tab that is open. Push reaches a phone in a pocket, which is a different problem and gets a different mechanism.
+
+There is no App Store build. Postbox is installed by adding it to the Home Screen, and that is not a compromise so much as the only shape that fits the product: every self-hoster runs their own Worker on their own domain, so a store binary would have to be either built and reviewed per person — each with their own \$99-a-year Apple account — or a generic "type in your server URL" shell, which is squarely in Apple's minimum-functionality territory. A manifest costs nothing, ships with the deploy, and works the same on both platforms. Installed, it gets its own icon, its own window and notifications; the same React app is doing the work either way.
+
+The delivery path is worth being precise about, because "web push is second class" is folklore now rather than fact: a Web Push message to Safari is delivered over APNs, and to Chrome over FCM. Those are the same services a native app would use. What Apple genuinely does restrict is *where* — `PushManager` exists only inside an installed web app, so `pushSupport()` in `src/ui/lib/push.ts` distinguishes "this browser cannot" from "this browser could, once you install it", and Settings says which.
+
+Three deliberate choices:
+
+- **The payload carries the subject and sender.** The doorbell carries nothing on purpose; this carries everything on purpose. iOS holds it against a subscription that receives a push and shows no notification, and a service worker that must fetch before it can render one shows nothing on a slow connection. It costs no privacy: RFC 8291 encrypts the payload to keys held only by that install, so Apple and Google relay ciphertext.
+- **The crypto is written out rather than depended on.** `web-push` is a Node library and does not run on Workers. Everything RFC 8291 needs — ECDH, HKDF, AES-GCM, ECDSA — is already in the runtime, so `src/worker/lib/push/` is about two hundred lines and no supply chain.
+- **The VAPID keypair is as sticky as `AUTH_SECRET`.** Regenerating it invalidates every subscription already registered, and the only symptom is notifications that quietly stop. It is minted once into `.secrets/` and never rewritten.
+
+Failures are absorbed the way the doorbell's are: push happens in `waitUntil` on the inbound path, after the message is stored and forwarded, so a push service having a bad minute cannot turn a delivered email into a bounced one. A `404` or `410` deletes the subscription on the spot; softer failures are counted, and an endpoint that has failed ten times running is retired.
+
+## The app icon
+
+A home-screen icon is how an app is recognised before anybody reads its name, so it is the mailbox's to choose rather than Postbox's to impose. Four options, in `Settings → Appearance`: the shipped envelope, the same envelope on your brand colour, a monogram, or an upload.
+
+The split of labour is forced by what each side can do. A Worker has no image library and a CPU budget measured in milliseconds; a browser has a canvas that can scale an image and render a letter in a real typeface. So every choice is rendered client-side into two finished 512-pixel PNGs — `any`, which is drawn as-is, and `maskable`, which Android crops to whatever shape its launcher uses — and the Worker's job is to check that what arrived is what was promised and store it in D1.
+
+The default is the exception, and is a static asset rather than a database row: `scripts/make-icons.mjs` draws the mark from the same geometry as `favicon.svg` using a signed-distance field, at build time, so there are no opaque binaries in the tree and `just icons` regenerates them. Static assets on Workers are free and unmetered, so an unmodified mailbox serves its icon without a single Worker request; only a customised one costs anything.
+
+`/manifest.webmanifest`, `/icons/app.png`, `/icons/app-maskable.png` and `/apple-touch-icon.png` are generated rather than served from disk, which is why they appear in the `run_worker_first` list in `alchemy.run.ts` — the asset layer would otherwise answer them with `index.html`. `apple-touch-icon.png` is not optional: iOS ignores the manifest's icons when adding to the Home Screen and falls back to a screenshot of the page without it.
+
 ## Why Workers and not Pages
 
 Pages Functions cannot register an `email()` handler; email triggers are Workers-only. Serving the UI from Workers static assets keeps everything in one deployable, and static asset requests are free and unmetered exactly as they are on Pages. This is also the model Cloudflare now recommends for new projects.
@@ -124,10 +150,16 @@ src/
     mailbox.ts          the Durable Object tabs hold a socket to
     lib/                auth, audit log, threading, inbound parsing, cron
     lib/mail/           sending providers behind one interface
-    routes/             auth · mail · compose · workspace
+    lib/push/           VAPID signing and RFC 8291 payload encryption
+    routes/             auth · mail · compose · workspace · push · icon
   ui/
     components/ui/      shadcn primitives
     components/mail/    the client
+public/
+  sw.js                 service worker; receives pushes, nothing else
+  icons/                the default app icon, drawn by scripts/make-icons.mjs
+scripts/
+  make-icons.mjs        renders that icon from the favicon's geometry
 ```
 
 ## Configuration
@@ -172,6 +204,12 @@ Threading uses `In-Reply-To` and `References` first, since those are authoritati
 
 Search is a standalone FTS5 table written by the Worker in the same batch as the message. Drafts are indexed too.
 
+**Mailboxes** group by the address mail arrived at, and group rather than file: a message to `billing@` is still an ordinary message in the Inbox, and archiving, starring and search behave exactly as they did. Like labels and Starred, a mailbox spans every folder but Trash.
+
+Membership is derived, not stored. Every message records which of your own addresses it touched — the envelope recipient plus To and Cc for inbound, the From address for outbound — in `message_addresses`, written in the same batch as the message itself. A mailbox row is then only a name and an address, so defining `billing@` today lists every message it has ever received, immediately, and deleting it moves nothing. The envelope recipient is kept alongside the headers because a message Bcc'd to `billing@` names that address nowhere else.
+
+That is also what makes Settings able to *offer* mailboxes: the addresses already receiving mail are a `GROUP BY` over the same table.
+
 ## What `just down` will not remove
 
 Alchemy destroys what it holds state for, and two of those resources destroy wider than they create: the Email Routing resource tears down by switching Email Routing off for the whole zone, and the catch-all resource disables whatever rule is there rather than the one Postbox wrote. On a domain that was already receiving mail, both are somebody else's outage.
@@ -191,6 +229,8 @@ There is no "forget this resource" command in Alchemy, but state is a directory 
 - **Attachments**: 8 MB total per outgoing message. Inbound attachments are stored in D1 up to 4 MB each and 12 MB per message. Above that the message and its metadata are kept but the bytes are dropped, because the Workers Free plan's CPU budget cannot reliably base64 a 25 MB message. Losing an attachment beats losing the email.
 - **Undo send** is client-side. Closing the tab during the window flushes the send via `sendBeacon` rather than cancelling it.
 - **Send later** is minute-granular, the finest a Cloudflare cron offers.
+- **Push** requires the app to be installed on iOS — Apple exposes the Push API only to a Home Screen web app. On Android and desktop an ordinary tab is enough. Notifications are held by the push service for six hours if a device is offline, and repeated replies to one conversation collapse into a single notification through the `Topic` header rather than arriving as a stack.
+- **App icons** are stored at 512 pixels in two variants and are never resized server-side; the browser renders them at the size the manifest declares.
 - **Spam** filtering is conservative: only mail that actively fails SPF, DKIM *and* DMARC is quarantined, since Cloudflare already rejects unauthenticated mail upstream.
 
 ## Security
@@ -198,6 +238,8 @@ There is no "forget this resource" command in Alchemy, but state is a directory 
 - One password gates the whole app. Sessions are stateless HMAC tokens carrying a short session id, so rotating `AUTH_SECRET` revokes every session. Failed sign-ins are rate-limited per IP.
 - The `audit` table records sign-ins, refused passwords, lockouts and every mutating API request, with address, country, device and the session id that ties them together. Mutations are logged by middleware rather than at each call site, so a route added later is covered without anyone remembering to. Reads are not logged and no message content is stored; a cron sweep drops rows past 90 days.
 - The WebSocket upgrade at `/api/live` is gated by the same session check as the API, and is handled before Hono so a 101 response is never handed to middleware that wants to set headers on it.
+- Push subscriptions are created behind the session gate. An unauthenticated subscribe endpoint would let anyone point their own phone at your mailbox and receive your subject lines. Signing out revokes whatever that sign-in registered, from the device and from the database, so a phone you have signed out of stops announcing mail it can no longer open.
+- The manifest and the app icon are public, and have to be: a manifest is fetched without credentials and an icon is fetched by the operating system, often by a process that has never held a cookie. What they disclose is the domain, which is in the URL you typed to get there.
 - The `*.workers.dev` hostname is off by default, so the app is reachable only on your own domain. See [Putting Cloudflare Access in front](#putting-cloudflare-access-in-front).
 - Received HTML is sanitised client-side (scripts, handlers, styles, unknown URL schemes removed) and links are forced to `target="_blank" rel="noopener"`.
 - Stored attachments are served with `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`.

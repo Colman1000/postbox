@@ -1,13 +1,17 @@
 import type {
   ActivityEvent,
+  AppIconSetting,
   AuditEntry,
   Contact,
   DraftInput,
   Folder,
   Identity,
   Label,
+  Mailbox,
+  MailboxSuggestion,
   MailUpdate,
   Paginated,
+  PushDevice,
   SendResult,
   SessionInfo,
   Stats,
@@ -104,6 +108,7 @@ export const api = {
     folder?: Folder;
     starred?: boolean;
     label?: string;
+    mailbox?: string;
     cursor?: string | null;
     limit?: number;
   }) => {
@@ -111,6 +116,7 @@ export const api = {
     if (params.folder) query.set("folder", params.folder);
     if (params.starred) query.set("starred", "1");
     if (params.label) query.set("label", params.label);
+    if (params.mailbox) query.set("mailbox", params.mailbox);
     if (params.cursor) query.set("cursor", params.cursor);
     if (params.limit) query.set("limit", String(params.limit));
     return request<Paginated<Thread>>(`/threads?${query}`);
@@ -140,6 +146,18 @@ export const api = {
   deleteDraft: (id: string) => request<{ ok: true }>(`/drafts/${id}`, { method: "DELETE" }),
 
   send: (draft: DraftInput & { scheduledAt?: number }) => post<SendResult>("/send", draft),
+
+  /**
+   * What a receiving spam filter is likely to notice about this draft.
+   *
+   * Advisory: it never blocks a send, and a clean result is not a promise of
+   * an inbox. See docs/DELIVERABILITY.md for what it cannot see.
+   */
+  deliverability: (draft: DraftInput) =>
+    post<{ findings: import("@shared/types.ts").DeliverabilityFinding[] }>(
+      "/deliverability/check",
+      draft,
+    ),
 
   cancelScheduled: (id: string) => post<{ ok: true }>(`/scheduled/${id}/cancel`),
 
@@ -212,6 +230,19 @@ export const api = {
   createLabel: (name: string, tone = "neutral") => post<Label>("/labels", { name, tone }),
   deleteLabel: (id: string) => request<{ ok: true }>(`/labels/${id}`, { method: "DELETE" }),
 
+  /**
+   * Sidebar mailboxes: one address each, with what clicking it will list.
+   *
+   * Creating one moves no mail — the grouping is derived from the address each
+   * message arrived at — so `createMailbox` is instant and `deleteMailbox`
+   * costs nothing but the sidebar entry.
+   */
+  mailboxes: () => request<Mailbox[]>("/mailboxes"),
+  mailboxSuggestions: () => request<MailboxSuggestion[]>("/mailboxes/suggestions"),
+  createMailbox: (address: string, name?: string) =>
+    post<Mailbox>("/mailboxes", { address, name }),
+  deleteMailbox: (id: string) => request<{ ok: true }>(`/mailboxes/${id}`, { method: "DELETE" }),
+
   identities: () => request<Identity[]>("/identities"),
   saveIdentity: (identity: Partial<Identity>) => post<{ ok: true }>("/identities", identity),
   deleteIdentity: (id: string) =>
@@ -231,6 +262,37 @@ export const api = {
   settings: () => request<Record<string, unknown>>("/settings"),
   saveSettings: (patch: Record<string, unknown>) =>
     request<{ ok: true }>("/settings", { method: "PATCH", body: JSON.stringify(patch) }),
+
+  // ── push ──────────────────────────────────────────────────────────────────
+  //
+  // The subscription itself is created by the browser; these only tell the
+  // mailbox about it. See lib/push.ts for the half that talks to the browser.
+  subscribePush: (subscription: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+  }) => post<{ ok: true }>("/push/subscribe", subscription),
+
+  unsubscribePush: (endpoint: string) => post<{ ok: true }>("/push/unsubscribe", { endpoint }),
+
+  pushDevices: () => request<PushDevice[]>("/push/devices"),
+
+  /** Sends a real notification through the real push service. */
+  testPush: () => post<{ ok: true; delivered: number }>("/push/test"),
+
+  // ── app icon ──────────────────────────────────────────────────────────────
+  //
+  // Both variants are rendered in the browser (see lib/app-icon.ts) and posted
+  // as finished PNGs, because a Worker cannot draw one.
+  saveAppIcon: (icon: { any: Blob; maskable: Blob }, meta: AppIconSetting) => {
+    const form = new FormData();
+    form.append("any", icon.any, "any.png");
+    form.append("maskable", icon.maskable, "maskable.png");
+    form.append("meta", JSON.stringify(meta));
+    return request<AppIconSetting>("/icon", { method: "POST", body: form });
+  },
+
+  /** Back to the icon Postbox ships, which is a static asset. */
+  resetAppIcon: () => request<AppIconSetting>("/icon", { method: "DELETE" }),
 
   stats: () => request<Stats>("/stats"),
   updates: (since: number) => request<MailUpdate>(`/updates?since=${since}`),

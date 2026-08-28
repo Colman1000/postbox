@@ -4,7 +4,7 @@
 
 **A real inbox for your own domain. Runs on Cloudflare's free tier. Costs nothing, forever.**
 
-[Setup](#setup) · [What it costs](#what-it-costs) · [Commands](#commands) · [Architecture](docs/ARCHITECTURE.md)
+[Setup](#setup) · [What it costs](#what-it-costs) · [Commands](#commands) · [Architecture](docs/ARCHITECTURE.md) · [Deliverability](docs/DELIVERABILITY.md)
 
 </div>
 
@@ -29,6 +29,8 @@ just up
 
 **Every address receives immediately.** There are no aliases to create. `hi@`, `billing@`, `press@`, and the typo somebody made last Tuesday all land in the same inbox — a catch-all rule doing the work, for free. Sending as one of them is a separate line in Settings → Addresses: no DNS and no provider setup, but you do add the address before it appears in the composer's From menu.
 
+**One inbox, and as many mailboxes as you need.** Because every address on the domain lands in one place, a busy domain can read as one undifferentiated pile. Name an address in Settings → Mailboxes — `billing@`, `support@`, the one you gave a single supplier — and it gets its own entry in the sidebar, with its own unread count, holding everything that address has ever received. Nothing is moved and nothing is hidden: the mail still arrives in your Inbox and is archived, starred and searched exactly as before. It is a second way in, not a filing cabinet, so trying one out costs nothing and removing it moves not one message. Settings offers the addresses that are already getting mail, so you pick from what is real rather than trying to remember.
+
 **It's built for the keyboard.** `c` to write, `e` to archive, `j`/`k` to move, `g i` for the inbox, `⌘K` for everything else, and `?` for the list of all of them — which is also a button in the toolbar, because a shortcut you can only find by already knowing it is folklore rather than a feature. The palette doubles as search, so finding a two-year-old thread is one keystroke and three letters.
 
 ![Command palette](docs/screenshots/command-palette.png)
@@ -46,6 +48,12 @@ A `mailto:` link in a message opens the composer here, filled in with whatever t
 ![Reading a message](docs/screenshots/reading-light.png)
 
 **It's a real phone app, not a squeezed desktop.** One pane at a time, navigation in a drawer, compose takes the full screen, and you can swipe a conversation away.
+
+Add it to your Home Screen and it stops being a website: its own icon, its own window, no browser chrome — and **push notifications when mail arrives**, on iPhone and Android alike, with the app closed and the phone locked. There is nothing to download and no App Store account involved. On iPhone that's Share → Add to Home Screen, then Settings → Alerts from the installed app; on Android your browser offers to install it.
+
+Notifications carry the sender and the subject, and they carry them privately: each one is encrypted to that device's own keys before it leaves your Worker, so Apple and Google relay bytes they cannot read. Replies to one conversation collapse into a single notification rather than stacking, signing out of a device stops it being notified, and Settings → Alerts lists every device that's registered so you can revoke one you don't recognise.
+
+**The icon is yours.** Settings → Appearance takes the shipped envelope, the same envelope on your brand colour, a monogram, or your own logo — so the thing on your Home Screen looks like *your* mail, not a copy of somebody's app. Pick one and every device that installs it gets it.
 
 <p align="center">
   <img src="docs/screenshots/mobile-inbox.png" width="270" alt="Inbox on mobile">
@@ -106,6 +114,7 @@ Nothing. To be specific about it:
 | | Free allowance | Enough for |
 |---|---|---|
 | Receiving | Unlimited | Everything |
+| Push notifications | Unlimited | Every device you own |
 | Sending | 100/day, 3,000/month | Personal and small-team use |
 | Storage | 5 GB | Roughly 100,000 messages |
 | Requests | 100,000/day | You, refreshing a lot |
@@ -124,9 +133,11 @@ The live channel is free for a specific reason worth knowing: the Durable Object
 | `just dev` | Run it locally. |
 | `just doctor` | Check your setup before deploying. |
 | `just verify` | Nudge Resend to re-check DNS. |
+| `just mailcheck` | Every record a receiving mail server checks, and what it concludes. |
 | `just secrets` | Where your password and keys live. |
 | `just logs` | Tail the live logs. |
 | `just sql "..."` | Query your mail directly. |
+| `just icons` | Redraw the default app icon. |
 
 Set `STAGE=staging` in `.env` and you get a completely separate copy, with its own database and hostname, on the same domain.
 
@@ -140,9 +151,11 @@ If you already run Cloudflare Zero Trust, you can put Access in front of `mail.y
 
 Your mail lives in your own Cloudflare D1 database. Nobody else can read it, there's no analytics, and there's nothing to export because it was never anywhere else.
 
+**Landing in the inbox is its own problem.** A mailbox you buy with a domain comes with somebody else's twenty-year-old sending reputation attached; a domain you set up yesterday has none, and receivers treat those two very differently no matter how correct your DNS is. Postbox publishes everything a receiver checks — SPF, DKIM, DMARC with reporting turned on, TLS-RPT, optionally MTA-STS — sends messages shaped like personal mail rather than like a campaign, and checks each draft for the things filters actually penalise. `just mailcheck` reports on all of it. What it cannot do is buy you reputation: that takes a few weeks of modest volume and, above all, replies. [docs/DELIVERABILITY.md](docs/DELIVERABILITY.md) is the whole picture, including the warmup ramp and when to tighten your DMARC policy.
+
 Postbox is for personal and small-team mail. It is not a marketing platform, and Resend's free tier will (correctly) stop you using it as one.
 
-More on how it fits together, including the data model and the deployment story, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+More on how it fits together, including the data model and the deployment story, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Getting read rather than filtered is in [docs/DELIVERABILITY.md](docs/DELIVERABILITY.md).
 
 ## License
 

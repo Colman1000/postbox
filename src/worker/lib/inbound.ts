@@ -3,14 +3,17 @@ import type { Address } from "../../shared/types.ts";
 import type { Env } from "../env.ts";
 import { dedupe } from "./addresses.ts";
 import {
+  indexAddresses,
   indexMessage,
   logEvent,
   makeSnippet,
   recomputeThread,
   resolveThreadId,
+  unreadCount,
   upsertContacts,
 } from "./db.ts";
 import { ulid } from "./ids.ts";
+import { announceArrivals } from "./push/index.ts";
 
 /**
  * Inbound mail.
@@ -217,6 +220,15 @@ export async function handleInboundEmail(
       body: bodyText ?? snippet,
       participants: [from, ...to, ...cc].map((a) => a.address).join(" "),
     }),
+    // Which of our addresses this arrived at, which is what puts it in a
+    // mailbox. The envelope recipient leads and is never dropped: a message
+    // Bcc'd to `billing@` names that address in no header at all, so matching
+    // on To and Cc alone would file it nowhere.
+    ...indexAddresses(env.DB, {
+      id: messageId,
+      threadId,
+      addresses: [message.to, ...to.map((a) => a.address), ...cc.map((a) => a.address)],
+    }),
     ...upsertContacts(env.DB, [from], now),
     logEvent(
       env.DB,
@@ -240,4 +252,33 @@ export async function handleInboundEmail(
   } catch (error) {
     console.error("doorbell failed", { threadId, error: String(error) });
   }
+
+  // And ring every device, for the case the doorbell cannot reach: nothing
+  // open anywhere. This goes through two push services and can take seconds,
+  // so it is handed to `waitUntil` rather than kept on the path a mail server
+  // is waiting on — and, like the doorbell, it can fail without costing the
+  // message, which is already stored and already forwarded.
+  ctx.waitUntil(
+    (async () => {
+      if (folder !== "inbox") return; // Quarantined mail does not wake a phone.
+      try {
+        await announceArrivals(
+          env,
+          [
+            {
+              id: messageId,
+              threadId,
+              subject,
+              snippet,
+              from,
+              receivedAt: now,
+            },
+          ],
+          await unreadCount(env.DB),
+        );
+      } catch (error) {
+        console.error("push failed", { threadId, error: String(error) });
+      }
+    })(),
+  );
 }

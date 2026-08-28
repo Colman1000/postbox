@@ -111,6 +111,36 @@ export interface Label {
   tone: LabelTone;
 }
 
+/**
+ * One address on the domain, given a place of its own in the sidebar.
+ *
+ * A mailbox groups rather than files: mail addressed to `billing@` still
+ * arrives in the Inbox and is archived and searched exactly as it was. The
+ * mailbox is a second way in, so a domain where every address lands in one
+ * pile can still be read one concern at a time.
+ */
+export interface Mailbox {
+  id: string;
+  address: string;
+  /** What the sidebar shows. Falls back to the address when unset. */
+  name?: string | null;
+  /** Conversations that reached this address — what clicking it lists. */
+  count: number;
+  /** How many of those are unread. */
+  unread: number;
+}
+
+/**
+ * An address that has received mail but has no mailbox yet.
+ *
+ * Offered in Settings so the common case — "which addresses am I actually
+ * getting mail at?" — is answered by the mailbox rather than typed into it.
+ */
+export interface MailboxSuggestion {
+  address: string;
+  count: number;
+}
+
 export interface Contact {
   address: string;
   name?: string | null;
@@ -221,7 +251,64 @@ export interface SessionInfo {
   stage: string;
   /** False until Resend confirms DNS; the UI warns instead of failing sends. */
   sendingReady: boolean;
+  /**
+   * The application server key an installed app subscribes with.
+   *
+   * Public by design — it is what the browser names when it creates the
+   * subscription, and what the push service checks our signature against.
+   * Null on a deployment made before push existed, which is the UI's cue to
+   * explain rather than to offer a switch that does nothing.
+   */
+  vapidKey: string | null;
 }
+
+/**
+ * One installed app that has asked to be told about mail.
+ *
+ * The endpoint is opaque and device-specific; it is shown to nobody, and only
+ * travels back to the API so a device can revoke itself.
+ */
+export interface PushDevice {
+  endpoint: string;
+  userAgent: string | null;
+  createdAt: number;
+  /** Null until the first notification actually reaches it. */
+  lastSuccessAt: number | null;
+}
+
+/**
+ * What the home-screen icon is, as opposed to what it looks like.
+ *
+ * The bytes live in the database and are served from `/icons/app.png`; this
+ * records which of the four ways they got there, so Settings can show the
+ * choice as made rather than as an anonymous image, and so picking "Colour"
+ * again after changing the brand colour redraws it.
+ */
+export type AppIconKind = "default" | "colour" | "monogram" | "custom";
+
+export interface AppIconSetting {
+  kind: AppIconKind;
+  /** One or two letters, for the monogram. */
+  monogram?: string;
+  /** The brand colour the mark was drawn on, so a change can be noticed. */
+  colour?: string | null;
+  /** What was uploaded, so Settings can name it. */
+  filename?: string;
+  /** When the bytes last changed. Also the cache buster in the manifest. */
+  updatedAt?: number;
+}
+
+/** Icons are square and stored at this edge, in both purposes. */
+export const APP_ICON_SIZE = 512;
+
+/**
+ * Ceiling on one stored icon, after the browser has scaled it.
+ *
+ * A 512-pixel PNG of a logo is a few tens of kilobytes; this is loose enough
+ * never to reject a real one and tight enough that a mistake cannot put a
+ * megabyte into the mail database.
+ */
+export const MAX_APP_ICON_BYTES = 256 * 1024;
 
 /** What Compose posts. */
 export interface DraftInput {
@@ -238,11 +325,33 @@ export interface DraftInput {
   attachmentIds?: string[];
 }
 
+/**
+ * One thing about a draft that a receiving filter is likely to notice.
+ *
+ * Advisory only — nothing here stops a send. `warn` is something a filter
+ * scores against you; `info` is something worth knowing that is not, on its
+ * own, a problem.
+ */
+export interface DeliverabilityFinding {
+  level: "warn" | "info";
+  /** Stable identifier, so the UI can dismiss one kind without dismissing all. */
+  code: string;
+  /** What a receiver will notice. */
+  message: string;
+  /** What to do about it. */
+  fix: string;
+}
+
 export interface SendResult {
   messageId: string;
   threadId: string;
   providerId?: string;
   scheduledAt?: number;
+  /**
+   * What the pre-send check found, if anything. Returned even on success:
+   * a message that went out is still worth knowing about for the next one.
+   */
+  warnings?: DeliverabilityFinding[];
 }
 
 export interface Paginated<T> {

@@ -21,6 +21,15 @@ export interface Env {
   /** Only bound when MAIL_PROVIDER is "cloudflare". */
   EMAIL?: SendEmail;
 
+  /**
+   * The VAPID keypair every push is signed with. Generated once at deploy time
+   * and kept in `.secrets/`, because minting a new one silently invalidates
+   * every subscription already registered. Empty on a deployment made before
+   * push existed; `pushConfigured()` is the check.
+   */
+  VAPID_PUBLIC_KEY: string;
+  VAPID_PRIVATE_KEY: string;
+
   /** The doorbell every open tab waits on. See mailbox.ts. */
   MAILBOX: DurableObjectNamespace<import("./mailbox.ts").Mailbox>;
 

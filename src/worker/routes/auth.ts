@@ -8,6 +8,7 @@ import {
   sessionCookie,
 } from "../lib/auth.ts";
 import { actorFrom, recordAudit } from "../lib/audit.ts";
+import { deleteSessionSubscriptions, pushConfigured } from "../lib/push/index.ts";
 import type { App } from "./context.ts";
 
 /**
@@ -32,6 +33,11 @@ auth.get("/session", async (c) => {
     appHostname: c.env.APP_HOSTNAME,
     stage: c.env.STAGE,
     sendingReady,
+    // Public by design, and sent unauthenticated for the same reason the rest
+    // of this response is: the login screen is served by the same app shell,
+    // and asking for it separately after sign-in would be a second round trip
+    // for a value that never changes.
+    vapidKey: pushConfigured(c.env) ? c.env.VAPID_PUBLIC_KEY : null,
   };
   return c.json(info);
 });
@@ -87,9 +93,25 @@ auth.post("/login", async (c) => {
 
 auth.post("/logout", (c) => {
   const secure = new URL(c.req.url).protocol === "https:";
+  const sessionId = c.get("sessionId");
+
   if (c.get("authenticated")) {
     c.executionCtx.waitUntil(recordAudit(c.env.DB, actorFrom(c), "sign-out", null));
+
+    // Whatever this sign-in registered for push goes with it. The device
+    // unsubscribes itself on the way out too, but that is a request it might
+    // not get to make — a phone signed out from another machine, a browser
+    // closed mid-flight — and a device that keeps announcing mail nobody on it
+    // can open is worse than one that goes quiet a moment early.
+    if (sessionId) {
+      c.executionCtx.waitUntil(
+        deleteSessionSubscriptions(c.env.DB, sessionId).catch((error) =>
+          console.error("revoking push on sign-out failed", { error: String(error) }),
+        ),
+      );
+    }
   }
+
   c.header("Set-Cookie", clearCookie(secure));
   return c.json({ ok: true });
 });

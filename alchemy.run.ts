@@ -13,6 +13,8 @@
  *
  * Everything here is reversible — `just down` removes all of it.
  */
+import { createHash } from "node:crypto";
+
 import alchemy from "alchemy";
 import {
   D1Database,
@@ -25,6 +27,7 @@ import {
   EmailSender,
   KVNamespace,
   Vite,
+  Worker,
   createCloudflareApi,
   findZoneForHostname,
 } from "alchemy/cloudflare";
@@ -45,6 +48,7 @@ import {
   readVault,
   randomPassword,
   randomSecret,
+  randomVapidKeys,
   updateVault,
 } from "./infra/vault.ts";
 import { printSummary } from "./infra/report.ts";
@@ -105,12 +109,21 @@ const prior = await captureProvenance(api, {
 // ── 1. Locally generated secrets ────────────────────────────────────────────
 // Generated once, reused forever. Regenerating the auth secret would sign
 // every existing session out, so it is deliberately sticky.
+const vapid = readVault(config.stage).vapidPublicKey
+  ? null
+  : randomVapidKeys();
+
 const vault = updateVault(config.stage, (current) => ({
   ...current,
   authSecret: current.authSecret ?? randomSecret(),
   appPassword: config.appPassword ?? current.appPassword ?? randomPassword(),
   appPasswordGenerated:
     current.appPasswordGenerated ?? (!config.appPassword && !current.appPassword),
+  // Push notifications. Sticky for a sharper reason than the others:
+  // regenerating this pair silently invalidates every phone already
+  // subscribed, and the symptom is notifications that simply stop.
+  vapidPublicKey: current.vapidPublicKey ?? vapid?.publicKey,
+  vapidPrivateKey: current.vapidPrivateKey ?? vapid?.privateKey,
 }));
 
 // ── 2. Storage ──────────────────────────────────────────────────────────────
@@ -173,17 +186,111 @@ const sendingDomain = usingResend
 const dmarcName = `_dmarc.${config.domain}`;
 const dmarcTaken = await foreignRecordExists(api, zoneId, "TXT", dmarcName);
 
+// `rua` is the half of DMARC that reports back. Without it the record is a
+// one-way instruction: receivers act on the policy and you never learn who is
+// sending as your domain, nor which of your own senders are failing — which
+// makes every later decision to tighten the policy a guess. `adkim`/`aspf`
+// stay relaxed because the sending provider's Return-Path lives on a
+// subdomain, and strict alignment would fail every message.
+const dmarcTags = [
+  "v=DMARC1",
+  `p=${config.dmarcPolicy}`,
+  ...(config.dmarcRua ? [`rua=${config.dmarcRua}`] : []),
+  ...(config.dmarcPct !== undefined ? [`pct=${config.dmarcPct}`] : []),
+  "adkim=r",
+  "aspf=r",
+  // Report on the whole domain rather than per-message-failure: `fo=1` asks
+  // for a report whenever *any* mechanism fails, which is what makes a partial
+  // misconfiguration visible instead of only a total one.
+  ...(config.dmarcRua ? ["fo=1"] : []),
+];
+
 const dmarcRecord = dmarcTaken
   ? []
   : [
       {
         type: "TXT" as const,
         name: dmarcName,
-        content: `v=DMARC1; p=${config.dmarcPolicy}; adkim=r; aspf=r`,
+        content: dmarcTags.join("; "),
         priority: undefined,
         purpose: "DMARC policy",
       },
     ];
+
+// ── TLS reporting ───────────────────────────────────────────────────────────
+// One record, no moving parts, nothing it can break: receivers mail a daily
+// summary of how TLS negotiation to your MX went. It is the cheapest visibility
+// in the whole setup, and the only way to notice a downgrade before it matters.
+const tlsRptName = `_smtp._tls.${config.domain}`;
+const tlsRptTaken = config.tlsRptTo
+  ? await foreignRecordExists(api, zoneId, "TXT", tlsRptName)
+  : true;
+
+const tlsRptRecord =
+  config.tlsRptTo && !tlsRptTaken
+    ? [
+        {
+          type: "TXT" as const,
+          name: tlsRptName,
+          content: `v=TLSRPTv1; rua=${config.tlsRptTo}`,
+          priority: undefined,
+          purpose: "TLS reporting",
+        },
+      ]
+    : [];
+
+// ── MTA-STS ─────────────────────────────────────────────────────────────────
+// Tells senders that mail for this domain must go over authenticated TLS to a
+// named set of MX hosts, which closes the downgrade attack SMTP is open to by
+// default. The policy is served over HTTPS by its own tiny Worker (below), and
+// the id below must change whenever the policy text does — so it is derived
+// from the policy text itself and cannot drift out of step with it.
+const mtaStsPolicy =
+  config.mtaSts === "off"
+    ? undefined
+    : [
+        "version: STSv1",
+        `mode: ${config.mtaSts}`,
+        // Every Email Routing MX is under this suffix, so one wildcard covers
+        // route1/2/3 and survives Cloudflare adding a fourth.
+        "mx: *.mx.cloudflare.net",
+        "max_age: 86400",
+      ].join("\n") + "\n";
+
+const mtaStsId = mtaStsPolicy
+  ? createHash("sha256").update(mtaStsPolicy).digest("hex").slice(0, 16)
+  : undefined;
+
+const mtaStsHostname = `mta-sts.${config.domain}`;
+
+const mtaStsRecords =
+  mtaStsPolicy && mtaStsId
+    ? [
+        {
+          type: "TXT" as const,
+          name: `_mta-sts.${config.domain}`,
+          content: `v=STSv1; id=${mtaStsId}`,
+          priority: undefined,
+          purpose: "MTA-STS policy id",
+        },
+      ]
+    : [];
+
+// ── domain ownership ────────────────────────────────────────────────────────
+// Google Postmaster Tools is the only place Gmail will tell you your own spam
+// complaint rate and domain reputation, and it will not tell you until the
+// domain is verified. One TXT record buys that.
+const siteVerificationRecord = config.siteVerification
+  ? [
+      {
+        type: "TXT" as const,
+        name: config.domain,
+        content: `google-site-verification=${config.siteVerification.replace(/^google-site-verification=/, "")}`,
+        priority: undefined,
+        purpose: "Google site verification",
+      },
+    ]
+  : [];
 
 // The provider's own records keep their provider in the comment; DMARC is
 // Postbox's regardless of which provider is sending.
@@ -192,7 +299,13 @@ const providerRecords = (sendingDomain?.records ?? []).map((record) => ({
   purpose: `Resend ${record.purpose}`,
 }));
 
-const wanted = [...providerRecords, ...dmarcRecord];
+const wanted = [
+  ...providerRecords,
+  ...dmarcRecord,
+  ...tlsRptRecord,
+  ...mtaStsRecords,
+  ...siteVerificationRecord,
+];
 const split =
   wanted.length > 0
     ? await classifyRecords(api, zoneId, wanted)
@@ -279,7 +392,21 @@ export const site = await Vite("postbox", {
   adopt: true,
   // Without this, a request to /api/* that does not match a built file is
   // answered with index.html by the asset layer and never reaches the Worker.
-  assets: { run_worker_first: ["/api/*"] },
+  //
+  // The manifest and the two icon paths are here for the same reason. They
+  // look like static files and are not: what they answer with depends on the
+  // icon this mailbox has chosen, so they have to be generated. The icon
+  // Postbox ships stays a real static file under /icons/, which these patterns
+  // deliberately do not match — the default costs no Worker request at all.
+  assets: {
+    run_worker_first: [
+      "/api/*",
+      "/manifest.webmanifest",
+      "/icons/app.png",
+      "/icons/app-maskable.png",
+      "/apple-touch-icon.png",
+    ],
+  },
   url: config.workersDevUrl,
   domains: [{ domainName: config.appHostname, zoneId, adopt: true }],
   // Wake up once a minute to flush scheduled sends and un-snooze threads.
@@ -313,6 +440,12 @@ export const site = await Vite("postbox", {
     AUTH_SECRET: alchemy.secret(vault.authSecret!),
     APP_PASSWORD: alchemy.secret(vault.appPassword!),
 
+    // The public half is not a secret — the browser is handed it to subscribe
+    // with, and it is in every push we sign. It is bound as a plain variable
+    // for exactly that reason.
+    VAPID_PUBLIC_KEY: vault.vapidPublicKey!,
+    VAPID_PRIVATE_KEY: alchemy.secret(vault.vapidPrivateKey!),
+
     MAIL_DOMAIN: config.domain,
     DEFAULT_FROM: config.defaultFrom,
     APP_HOSTNAME: config.appHostname,
@@ -324,6 +457,40 @@ export const site = await Vite("postbox", {
     SENDING_READY: usingResend ? (verification?.verified ? "1" : "0") : "1",
   },
 });
+
+// ── 5b. The MTA-STS policy ──────────────────────────────────────────────────
+// Its own Worker, on its own hostname, serving exactly one file.
+//
+// The policy has to be fetched over HTTPS from `mta-sts.<domain>`, and the
+// obvious shortcut — hanging that hostname off the app Worker — would put a
+// second public door on the mailbox to serve a 200-byte text file. This one
+// has no bindings, so it cannot reach the database even by accident.
+const mtaStsWorker = mtaStsPolicy
+  ? await Worker("mta-sts", {
+      name: `${config.names.worker}-mta-sts`,
+      adopt: true,
+      script: `const POLICY = ${JSON.stringify(mtaStsPolicy)};
+
+export default {
+  fetch(request) {
+    if (new URL(request.url).pathname !== "/.well-known/mta-sts.txt") {
+      return new Response("Not found\\n", { status: 404 });
+    }
+    return new Response(POLICY, {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        // Senders cache the policy for max_age anyway; an hour at the edge is
+        // short enough that a mode change takes effect the same day.
+        "cache-control": "public, max-age=3600",
+      },
+    });
+  },
+};
+`,
+      domains: [{ domainName: mtaStsHostname, zoneId, adopt: true }],
+      observability: { enabled: true },
+    })
+  : undefined;
 
 // ── 6. Point the domain's mail at the Worker ────────────────────────────────
 // Declared after the Worker so the rule has something to reference. A
@@ -394,6 +561,7 @@ if (app.phase === "up") {
     forwardVerified,
     dnsRecordCount:
       (managedDns?.records.length ?? 0) + (adoptedDns?.records.length ?? 0),
+    mtaStsHostname: mtaStsWorker ? mtaStsHostname : undefined,
     vaultRead: readVault(config.stage),
   });
 }

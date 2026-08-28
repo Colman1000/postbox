@@ -19,16 +19,19 @@ import { api, type ThreadAction } from "./api.ts";
 
 export const keys = {
   session: ["session"] as const,
-  threads: (folder: string, label?: string, starred?: boolean) =>
-    ["threads", folder, label ?? null, starred ?? false] as const,
+  threads: (folder: string, label?: string, starred?: boolean, mailbox?: string) =>
+    ["threads", folder, label ?? null, starred ?? false, mailbox ?? null] as const,
   thread: (id: string) => ["thread", id] as const,
   search: (q: string) => ["search", q] as const,
   stats: ["stats"] as const,
   labels: ["labels"] as const,
+  mailboxes: ["mailboxes"] as const,
+  mailboxSuggestions: ["mailbox-suggestions"] as const,
   identities: ["identities"] as const,
   templates: ["templates"] as const,
   contacts: (q: string) => ["contacts", q] as const,
   settings: ["settings"] as const,
+  pushDevices: ["push-devices"] as const,
   events: ["events"] as const,
   audit: ["audit"] as const,
   updates: ["updates"] as const,
@@ -47,15 +50,17 @@ export function useThreads(view: {
   folder: Folder;
   label?: string;
   starred?: boolean;
+  mailbox?: string;
 }) {
   return useInfiniteQuery({
-    queryKey: keys.threads(view.folder, view.label, view.starred),
+    queryKey: keys.threads(view.folder, view.label, view.starred, view.mailbox),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) =>
       api.threads({
         folder: view.folder,
         label: view.label,
         starred: view.starred,
+        mailbox: view.mailbox,
         cursor: pageParam,
       }),
     getNextPageParam: (last) => (last.hasMore ? last.cursor : undefined),
@@ -94,6 +99,29 @@ export function useStats() {
 export const useLabels = () =>
   useQuery({ queryKey: keys.labels, queryFn: api.labels, staleTime: 300_000 });
 
+/**
+ * The sidebar's mailboxes, and their counts.
+ *
+ * Refetched on the same cadence as the folder counts rather than cached like
+ * labels: these carry unread badges, and a badge that lags five minutes behind
+ * the mail it counts is a badge nobody trusts.
+ */
+export const useMailboxes = () =>
+  useQuery({
+    queryKey: keys.mailboxes,
+    queryFn: api.mailboxes,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+
+/** Addresses that get mail but have no mailbox. Only read inside Settings. */
+export const useMailboxSuggestions = () =>
+  useQuery({
+    queryKey: keys.mailboxSuggestions,
+    queryFn: api.mailboxSuggestions,
+    staleTime: 300_000,
+  });
+
 export const useIdentities = () =>
   useQuery({ queryKey: keys.identities, queryFn: api.identities, staleTime: 300_000 });
 
@@ -102,6 +130,15 @@ export const useTemplates = () =>
 
 export const useSettings = () =>
   useQuery({ queryKey: keys.settings, queryFn: api.settings, staleTime: 300_000 });
+
+/**
+ * Which devices are registered for push.
+ *
+ * Only fetched when the Alerts tab is open — Radix does not mount a panel
+ * nobody has looked at, so this costs nothing until somebody goes looking.
+ */
+export const usePushDevices = () =>
+  useQuery({ queryKey: keys.pushDevices, queryFn: api.pushDevices, staleTime: 30_000 });
 
 /**
  * The two logs in Settings.
@@ -137,16 +174,30 @@ export function useContacts(query: string) {
 }
 
 /** Which actions remove a conversation from the list you are looking at. */
-function removesFromView(action: ThreadAction, folder: Folder, starred?: boolean): boolean {
+function removesFromView(
+  action: ThreadAction,
+  view: { folder: Folder; starred?: boolean; label?: string; mailbox?: string },
+): boolean {
   if (action === "delete") return true;
-  // Starred is a filter, not a folder: unstarring is what removes a row there.
-  if (action === "unstar") return starred === true;
-  if (action === "archive") return folder === "inbox" || folder === "spam";
-  if (action === "trash") return folder !== "trash";
-  if (action === "spam") return folder === "inbox";
-  if (action === "not-spam" || action === "inbox") return folder === "spam" || folder === "trash";
-  if (action === "restore") return folder === "trash";
   if (action === "snooze") return true;
+  // Starred is a filter, not a folder: unstarring is what removes a row there.
+  if (action === "unstar") return view.starred === true;
+
+  /*
+   * Starred, labels and mailboxes span every folder but Trash, exactly as the
+   * server lists them. So filing a conversation moves it *within* such a view
+   * rather than out of it — archiving a labelled conversation must not make
+   * the row vanish from the label, since reloading would only bring it back.
+   */
+  const spansFolders = view.starred === true || Boolean(view.label) || Boolean(view.mailbox);
+  if (spansFolders) return action === "trash";
+
+  if (action === "archive") return view.folder === "inbox" || view.folder === "spam";
+  if (action === "trash") return view.folder !== "trash";
+  if (action === "spam") return view.folder === "inbox";
+  if (action === "not-spam" || action === "inbox")
+    return view.folder === "spam" || view.folder === "trash";
+  if (action === "restore") return view.folder === "trash";
   return false;
 }
 
@@ -174,7 +225,12 @@ function patchThread(thread: Thread, action: ThreadAction, until?: number): Thre
  * reconciles with the server. On failure the whole snapshot is rolled back, so
  * a dropped request never leaves the UI lying.
  */
-export function useThreadAction(view: { folder: Folder; starred?: boolean }) {
+export function useThreadAction(view: {
+  folder: Folder;
+  starred?: boolean;
+  label?: string;
+  mailbox?: string;
+}) {
   const client = useQueryClient();
 
   return useMutation({
@@ -192,7 +248,7 @@ export function useThreadAction(view: { folder: Folder; starred?: boolean }) {
       await client.cancelQueries({ queryKey: ["threads"] });
       const snapshot = client.getQueriesData({ queryKey: ["threads"] });
       const idSet = new Set(ids);
-      const drop = removesFromView(action, view.folder, view.starred);
+      const drop = removesFromView(action, view);
 
       client.setQueriesData<{ pages: { items: Thread[] }[] }>(
         { queryKey: ["threads"] },
@@ -222,6 +278,9 @@ export function useThreadAction(view: { folder: Folder; starred?: boolean }) {
     onSettled: (_data, _error, { ids }) => {
       client.invalidateQueries({ queryKey: ["threads"] });
       client.invalidateQueries({ queryKey: keys.stats });
+      // Mailbox badges count unread and deleted conversations too, so they go
+      // stale on exactly the actions the folder counts do.
+      client.invalidateQueries({ queryKey: keys.mailboxes });
       // Reading or archiving changes the unread count, and the count is what
       // the tab title shows — leaving it 15 seconds stale is 15 seconds of the
       // title claiming mail you have already read.
@@ -235,6 +294,7 @@ export function useThreadAction(view: { folder: Folder; starred?: boolean }) {
 export function refreshAfterSend(client: QueryClient, threadId?: string) {
   client.invalidateQueries({ queryKey: ["threads"] });
   client.invalidateQueries({ queryKey: keys.stats });
+  client.invalidateQueries({ queryKey: keys.mailboxes });
   client.invalidateQueries({ queryKey: keys.updates });
   client.invalidateQueries({ queryKey: keys.events });
   client.invalidateQueries({ queryKey: keys.contacts("") });

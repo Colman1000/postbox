@@ -29,6 +29,15 @@ export interface VaultData {
   authSecret?: string;
   /** UI password — generated unless the operator supplied one. */
   appPassword?: string;
+  /**
+   * VAPID keypair for push notifications, base64url.
+   *
+   * As sticky as the auth secret, and for a worse reason: rotating this
+   * invalidates every push subscription already registered, and the only
+   * symptom is notifications that quietly stop. Nothing regenerates it.
+   */
+  vapidPublicKey?: string;
+  vapidPrivateKey?: string;
   /** True the first time we generated the password, so we print it once. */
   appPasswordGenerated?: boolean;
   /** Passphrase Alchemy uses to encrypt secrets inside `.alchemy/`. */
@@ -185,6 +194,35 @@ export function vaultPath(stage: string): string {
 /** URL-safe high-entropy string, used for the auth secret. */
 export function randomSecret(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("base64url");
+}
+
+/**
+ * A P-256 keypair for signing push notifications.
+ *
+ * Two base64url strings, in the shape the browser and the Worker each want:
+ * the public half is the uncompressed point (`0x04` and the two coordinates)
+ * that a subscription names as its application server key, and the private
+ * half is the bare scalar. Both come straight out of the JWK export, which is
+ * already base64url — so this is a reshuffle rather than a conversion.
+ */
+export function randomVapidKeys(): { publicKey: string; privateKey: string } {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+
+  const priv = privateKey.export({ format: "jwk" }) as crypto.JsonWebKey;
+  const pub = publicKey.export({ format: "jwk" }) as crypto.JsonWebKey;
+  if (!pub.x || !pub.y || !priv.d) {
+    throw new Error("Node produced a P-256 key without coordinates, which should be impossible.");
+  }
+
+  const point = Buffer.concat([
+    Buffer.from([0x04]),
+    Buffer.from(pub.x, "base64url"),
+    Buffer.from(pub.y, "base64url"),
+  ]);
+
+  return { publicKey: point.toString("base64url"), privateKey: priv.d };
 }
 
 /**

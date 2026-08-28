@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArchiveIcon,
+  AtSignIcon,
   ChevronsLeftIcon,
   ChevronsRightIcon,
   ClockIcon,
@@ -25,7 +26,8 @@ import {
 } from "lucide-react";
 import type { Folder, SessionInfo } from "@shared/types.ts";
 import { api } from "@/lib/api.ts";
-import { keys, useLabels, useStats } from "@/lib/queries.ts";
+import { unsubscribe } from "@/lib/push.ts";
+import { keys, useLabels, useMailboxes, useStats } from "@/lib/queries.ts";
 import { applyTheme, readTheme, type Theme } from "@/lib/theme.ts";
 import { cn } from "@/lib/utils.ts";
 import type { MailView } from "./mail-app.tsx";
@@ -89,6 +91,7 @@ export function Sidebar({
   const client = useQueryClient();
   const stats = useStats();
   const labels = useLabels();
+  const mailboxes = useMailboxes();
   const [theme, setTheme] = useState<Theme>(readTheme);
 
   function changeTheme(next: Theme) {
@@ -161,7 +164,7 @@ export function Sidebar({
         <ul className="space-y-0.5">
           {FOLDERS.map((folder) => {
             const active =
-              view.folder === folder.key && !view.starred && !view.label;
+              view.folder === folder.key && !view.starred && !view.label && !view.mailbox;
             const unread = stats.data?.unread[folder.key] ?? 0;
             const total = stats.data?.counts[folder.key] ?? 0;
             // Inbox and Spam show what is unread; the rest show volume.
@@ -200,6 +203,50 @@ export function Sidebar({
           </li>
         </ul>
 
+        {/*
+          Mailboxes sit above labels because they answer a different question.
+          A label is something you applied; a mailbox is something the domain
+          did on its own — mail to `billing@` gathers here whether or not
+          anyone filed it. That makes it the closer relative of Inbox, so it
+          keeps the higher place.
+        */}
+        {open && (mailboxes.data?.length ?? 0) > 0 && (
+          <>
+            <Separator className="my-3" />
+            <p className="text-muted-foreground px-2 pb-1 text-[10px] font-medium tracking-wider uppercase">
+              Mailboxes
+            </p>
+            <ul className="space-y-0.5">
+              {mailboxes.data?.map((mailbox) => (
+                <li key={mailbox.id}>
+                  <NavItem
+                    open={open}
+                    active={view.mailbox === mailbox.id}
+                    icon={<AtSignIcon />}
+                    label={mailbox.name || mailbox.address.split("@")[0]}
+                    title={mailbox.address}
+                    /*
+                      Unread when there is any, total otherwise. A mailbox with
+                      forty read messages and no badge at all reads as empty,
+                      and a bold count next to a quiet one is the whole point:
+                      which of these wants me today.
+                    */
+                    badge={mailbox.unread || mailbox.count}
+                    emphasise={mailbox.unread > 0}
+                    onClick={() =>
+                      onChangeView({
+                        folder: "inbox",
+                        mailbox: mailbox.id,
+                        mailboxName: mailbox.name || mailbox.address,
+                      })
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
         {open && (labels.data?.length ?? 0) > 0 && (
           <>
             <Separator className="my-3" />
@@ -236,7 +283,7 @@ export function Sidebar({
             className="text-muted-foreground hover:text-foreground mt-1 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] transition-colors"
           >
             <PlusIcon className="size-3.5" />
-            New label
+            {(mailboxes.data?.length ?? 0) === 0 ? "New mailbox or label" : "New label"}
           </button>
         )}
       </nav>
@@ -326,6 +373,12 @@ export function Sidebar({
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={async () => {
+                // Before the session goes, so the request that revokes this
+                // device's push registration still carries a valid cookie. It
+                // is allowed to fail — the server drops every registration
+                // this sign-in made anyway — but doing it here is what stops
+                // the browser holding a subscription nothing will ever push to.
+                await unsubscribe().catch(() => {});
                 await api.logout();
                 client.setQueryData(keys.session, { ...session, authenticated: false });
                 client.clear();
@@ -345,6 +398,7 @@ function NavItem({
   active,
   icon,
   label,
+  title,
   hint,
   badge,
   emphasise,
@@ -354,6 +408,12 @@ function NavItem({
   active: boolean;
   icon: React.ReactNode;
   label: string;
+  /**
+   * The longer truth behind a short label — a mailbox shows "Billing" and
+   * means `billing@example.com`, and the address is worth having on hover
+   * rather than only in Settings.
+   */
+  title?: string;
   hint?: string;
   badge?: number;
   emphasise?: boolean;
@@ -364,6 +424,7 @@ function NavItem({
       type="button"
       onClick={onClick}
       aria-current={active ? "page" : undefined}
+      title={title}
       className={cn(
         "group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors",
         // Comfortable to tap on a phone, unchanged on a mouse.
@@ -398,7 +459,7 @@ function NavItem({
   return (
     <Tooltip>
       <TooltipTrigger asChild>{content}</TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
+      <TooltipContent side="right">{title ?? label}</TooltipContent>
     </Tooltip>
   );
 }

@@ -69,6 +69,7 @@ export const resendProvider: MailProvider = {
     if (request.replyTo) payload.reply_to = request.replyTo;
 
     const headers: Record<string, string> = {};
+    if (request.messageId) headers["Message-ID"] = request.messageId;
     if (request.inReplyTo) headers["In-Reply-To"] = request.inReplyTo;
     if (request.references) headers["References"] = request.references;
     if (Object.keys(headers).length > 0) payload.headers = headers;
