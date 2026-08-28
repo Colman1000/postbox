@@ -4,7 +4,7 @@ import { DownloadIcon, ShareIcon, SmartphoneIcon, Trash2Icon } from "lucide-reac
 import { toast } from "sonner";
 import { api, ApiError } from "@/lib/api.ts";
 import { deviceSummary, relativeTime } from "@/lib/format.ts";
-import { canInstall, promptInstall, subscribeInstall } from "@/lib/install.ts";
+import { canInstall, installHint, promptInstall, subscribeInstall } from "@/lib/install.ts";
 import { isApple, PushError } from "@/lib/push.ts";
 import { keys, usePushDevices } from "@/lib/queries.ts";
 import { usePush } from "@/hooks/use-push.ts";
@@ -117,8 +117,16 @@ export function PushSettings({ vapidKey }: { vapidKey: string | null }) {
       {/*
         Android buries this in the browser's ⋮ menu, and people reasonably
         never look there. The dialog it opens is the browser's own either way.
+
+        Shown whenever Postbox is not already installed, rather than only when
+        Chromium has an unspent prompt to hand us: `beforeinstallprompt` fires
+        once per origin, so a browser that has already offered — or already
+        been declined — leaves us with no event and a person still looking for
+        the button. Without the event there is no dialog to open, so the row
+        says where the browser keeps its own. The one case it stays quiet is
+        iOS in a tab, where the two paragraphs below already say it twice.
       */}
-      {installable && (
+      {!push.installed && (
         <div className="flex items-start gap-3 rounded-lg border p-3">
           <span className="text-muted-foreground mt-0.5">
             <DownloadIcon className="size-4" />
@@ -129,10 +137,17 @@ export function PushSettings({ vapidKey }: { vapidKey: string | null }) {
               Postbox gets its own icon and its own window, with no browser chrome around
               it. Nothing is downloaded and no app store is involved.
             </p>
+            {!installable && push.support !== "needs-install" && (
+              <p className="text-muted-foreground mt-1.5 text-[12px] leading-relaxed">
+                {installHint()}
+              </p>
+            )}
           </div>
-          <Button variant="outline" size="sm" onClick={install}>
-            Install
-          </Button>
+          {installable && (
+            <Button variant="outline" size="sm" onClick={install}>
+              Install
+            </Button>
+          )}
         </div>
       )}
 

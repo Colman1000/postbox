@@ -12,6 +12,8 @@
  * `isApple()` in push.ts.
  */
 
+import { isApple } from "./push.ts";
+
 /** Chrome's, and not in lib.dom. */
 interface InstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -64,4 +66,32 @@ export async function promptInstall(): Promise<boolean> {
   await event.prompt();
   const { outcome } = await event.userChoice;
   return outcome === "accepted";
+}
+
+/**
+ * What to say when the browser will not be asked.
+ *
+ * `beforeinstallprompt` is Chromium's alone, and even there it is spent after
+ * one offer: a Chrome that has already shown the prompt — or already declined
+ * to — fires nothing on the next visit, and the button above it vanishes with
+ * it. The route is still open in every one of those cases; it is just a walk
+ * the person has to take themselves. So the row stays and says how.
+ */
+export function installHint(): string {
+  const ua = navigator.userAgent;
+  const chromium = /Chrome|Chromium|Edg\//.test(ua);
+
+  if (isApple()) {
+    return "Tap Share, then Add to Home Screen, and open Postbox from there.";
+  }
+  if (/Firefox\//.test(ua)) {
+    return "Firefox does not install web apps. Open this address in Chrome or Safari to add Postbox to your home screen.";
+  }
+  if (!chromium) {
+    return "In Safari, choose File, then Add to Dock.";
+  }
+  if (/Android/.test(ua)) {
+    return "Open Chrome's ⋮ menu and choose Add to Home screen. If it is not offered, Postbox is already installed.";
+  }
+  return "Use the install icon at the right of the address bar, or look for Install in the browser's menu.";
 }
